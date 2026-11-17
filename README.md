@@ -48,6 +48,8 @@ flowchart LR
 1. **Send the path, then double-click the shortcut**: in Explorer select the folder, press Ctrl+Shift+C (copy as path) and paste it into the chat with the bot. Then double-click **YouTube upload (Telegram)** on the desktop.
    - `scripts/telegram_check.py` fetches the waiting paths from Telegram, which keeps them for 24 hours.
    - It tells the bot it is starting, then runs the workflow once per path with `n8n execute`. n8n exits when the run is done.
+   - **Stop from the phone**: send `/stop` (or `stop`) to the bot. It ends the run in progress and any other n8n on the PC, including a server you started yourself, and drops the paths still waiting. The bot lists what it stopped. A path sent during a run is queued and runs next.
+   - If a run leaves n8n behind, the check ends it by itself. If n8n is still running after the last path for another reason (a server you started, a desktop-app run), the bot says so and keeps listening for `/stop` for 10 minutes (`STOP_LISTEN_MINUTES` in `.env`, `0` turns this off).
    - No n8n server, no tunnel and nothing reachable from the internet in between.
    - Only the chat in `TELEGRAM_CHAT_ID` is accepted. The path reaches the shell only hex-encoded, so a message cannot inject a command.
 2. **Check the folder** (`scripts/intake.py`):
@@ -150,6 +152,14 @@ On a 35-second dialogue Short with its metadata in another language than the spe
   - Mock runs of every reply outcome.
   - Real run through n8n with a fake Telegram message `"…\markdown" morgen 18 Uhr`: the three YouTube lookups found the channel's newest long video, its link went on top of the description, and `publishAt` was set to 18:00 on the PC clock. No upload in this test.
 - **Desktop app (16 Nov 2026):** "Write missing text with AI" on a folder with title and description but no tags, through the real server and n8n: the steps lit up live (check 3.3 s, linked video 1.4 s, transcription 19.5 s, gemma4 11.4 s; 70 s with n8n start-up). The draft filled 13 tags and the description with the linked video on top, and kept the file's title. The counters block an upload over YouTube's limits (tags 949/500, description 5200/5000 bytes with multi-byte characters, `<` in the title). The **Upload** button itself has not been pressed in a test.
+- **/stop (17 Nov 2026):** 39 checks against a fake Telegram API and a fake n8n:
+  - `/stop` during a run: the run and its task runner end, and a path sent during the run is queued, then dropped and listed.
+  - A task runner left behind after a run is ended.
+  - `/stop` between waiting paths drops the earlier ones.
+  - A server still running after the upload gets one notice, a path sent while listening runs, and `stop` ends the server.
+  - Listening ends when its window runs out; `STOP_LISTEN_MINUTES=0` turns it off.
+  - A real `n8n execute` run through the fake API was noticed on exit. The n8n server already running on the PC was named in the notice and left alone.
+  - Not yet tried with the real bot.
 
 The YouTube and Telegram steps need your own Google OAuth client and Telegram bot (see setup).
 

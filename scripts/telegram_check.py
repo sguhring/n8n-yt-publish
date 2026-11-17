@@ -7,6 +7,14 @@ shortcut. For each message it tells the bot it is starting, runs
 runs the folder check, metadata, private upload and Telegram reply, and exits again) and
 reports a failed run to the bot. Telegram keeps undelivered messages for 24 hours.
 
+While it runs, it reads the bot every few seconds:
+- /stop (also "stop" or "stopp") ends the n8n run in progress and every other n8n process on
+  this PC, a server you started yourself included, and drops the paths still waiting.
+- A path sent during a run is queued and runs after the current one.
+After each run, n8n processes the run left behind are ended. If n8n is still running after the
+last path (a server you started, a desktop-app run), the bot says so and the check keeps
+listening for /stop for STOP_LISTEN_MINUTES (default 10, 0 turns it off) or until n8n is gone.
+
 Needs in .env: TELEGRAM_BOT_TOKEN (the bot's token, the same one as in n8n's Telegram
 credential) and TELEGRAM_CHAT_ID. Messages from any other chat are dropped.
 
@@ -23,13 +31,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import deque
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -39,6 +50,10 @@ RUN_OUT = REPO / "logs" / "last_n8n_run.out"
 LOCK = REPO / "work" / "telegram_check.lock"
 RUN_TIMEOUT_S = 30 * 60
 LOG_MAX_BYTES = 1_000_000
+POLL_S = 5  # long-poll wait while n8n runs; also how fast the end of a run is noticed
+LISTEN_POLL_S = 20  # long-poll wait while only listening for /stop
+STOP_WORDS = {"/stop", "stop", "stopp"}
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 def log(msg: str) -> None:
@@ -93,8 +108,9 @@ class Telegram:
             {k: json.dumps(v) if isinstance(v, (list, dict)) else v for k, v in params.items()}
         ).encode()
         req = urllib.request.Request(self.url + method, data=data)
+        wait = int(params.get("timeout") or 0)  # long poll: Telegram holds the request this long
         try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
+            with urllib.request.urlopen(req, timeout=20 + wait) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             try:
@@ -164,16 +180,282 @@ def n8n_env(message: dict) -> dict:
     return env
 
 
-def run_workflow(message: dict, workflow_id: str) -> int:
-    cmd = [n8n_command(), "execute", f"--id={workflow_id}"]
-    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    t0 = time.time()
-    with RUN_OUT.open("w", encoding="utf-8", errors="replace") as out:
-        proc = subprocess.run(cmd, env=n8n_env(message), stdout=out, stderr=subprocess.STDOUT,
-                              cwd=REPO, timeout=RUN_TIMEOUT_S, creationflags=flags)
-    log(f"n8n run for message {message.get('message_id')} finished with exit {proc.returncode} "
-        f"after {round(time.time() - t0)} s (output in logs/{RUN_OUT.name})")
-    return proc.returncode
+# ---------- n8n processes on this PC (for /stop and for runs that do not exit)
+
+def n8n_pattern() -> re.Pattern:
+    # The npm install's CLI and its task runner. N8N_PROC_MATCH is for tests with a fake n8n.
+    return re.compile(os.environ.get("N8N_PROC_MATCH")
+                      or r"node_modules[\\/]+n8n[\\/]+bin[\\/]+n8n|@n8n[\\/]+task-runner", re.I)
+
+
+def n8n_processes() -> tuple[list[dict], set[int]]:
+    """n8n processes now running (servers, runs, task runners) and the pids of all live processes."""
+    if os.name == "nt":
+        script = ("$all = Get-CimInstance Win32_Process; [pscustomobject]@{ pids = @($all.ProcessId); "
+                  "node = @($all | Where-Object Name -eq 'node.exe' | ForEach-Object { [pscustomobject]@{ "
+                  "pid = $_.ProcessId; ppid = $_.ParentProcessId; cmd = $_.CommandLine; "
+                  "started = $(if ($_.CreationDate) { $_.CreationDate.ToString('yyyy-MM-ddTHH:mm:ss') } else { '' }) } }) } "
+                  "| ConvertTo-Json -Compress -Depth 3")
+        out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             timeout=60, creationflags=NO_WINDOW).stdout
+        data = json.loads(out)
+        alive = {int(p) for p in data.get("pids") or []}
+        rows = data.get("node") or []
+        rows = [rows] if isinstance(rows, dict) else rows
+    else:
+        out = subprocess.run(["ps", "-eo", "pid=,ppid=,etimes=,args="], capture_output=True, text=True,
+                             timeout=60).stdout
+        alive, rows = set(), []
+        for line in out.splitlines():
+            parts = line.split(None, 3)
+            if len(parts) < 3:
+                continue
+            alive.add(int(parts[0]))
+            started = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(time.time() - int(parts[2])))
+            rows.append({"pid": parts[0], "ppid": parts[1], "cmd": parts[3] if len(parts) > 3 else "",
+                         "started": started})
+    pattern = n8n_pattern()
+    procs = [{"pid": int(r["pid"]), "ppid": int(r.get("ppid") or 0), "cmd": r.get("cmd") or "",
+              "started": r.get("started") or ""} for r in rows if pattern.search(r.get("cmd") or "")]
+    return procs, alive
+
+
+def roots(procs: list[dict]) -> list[dict]:
+    """The top process of each n8n tree (a task runner belongs to the n8n that started it)."""
+    pids = {p["pid"] for p in procs}
+    return [p for p in procs if p["ppid"] not in pids]
+
+
+def describe(p: dict) -> str:
+    cmd = p["cmd"]
+    m = re.search(r"n8n[\\/]+bin[\\/]+n8n\"?\s+([\w:-]+)", cmd)
+    sub = m.group(1) if m else ""
+    what = ("n8n task runner" if re.search(r"task-runner", cmd, re.I)
+            else "n8n workflow run" if sub == "execute"
+            else "n8n server" if sub in ("", "start") else f"n8n {sub}")
+    try:
+        return what + time.strftime(", started %d.%m. %H:%M", time.strptime(p["started"], "%Y-%m-%dT%H:%M:%S"))
+    except ValueError:
+        return what
+
+
+def kill_tree(pid: int) -> None:
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=60,
+                       creationflags=NO_WINDOW)
+    else:
+        subprocess.run(["pkill", "-TERM", "-P", str(pid)], capture_output=True)
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+
+def running_n8n() -> list[dict]:
+    try:
+        return roots(n8n_processes()[0])
+    except Exception as e:
+        log(f"could not list processes: {e}")
+        return []
+
+
+# ---------- messages
+
+def is_stop(message: dict) -> bool:
+    text = re.sub(r"@\w+$", "", str(message.get("text") or "").strip().lower())  # /stop@botname
+    return text in STOP_WORDS
+
+
+def short(message: dict) -> str:
+    """The folder name from a path message, for the bot's replies."""
+    text = str(message.get("text") or "").strip()
+    first = text.splitlines()[0] if text else "(no text)"
+    quoted = re.match(r'"([^"]+)"', first)
+    path = (quoted.group(1) if quoted else first).rstrip("\\/")
+    name = re.split(r"[\\/]", path)[-1] or path
+    return '"' + name[:60] + '"'
+
+
+def notify(tg: Telegram, chat_id: str, message: dict | None, text: str) -> None:
+    """Short status line to the bot, as a reply to the message if there is one; never fatal."""
+    params = {"chat_id": chat_id, "text": text}
+    if message:
+        params.update(reply_to_message_id=message.get("message_id"), allow_sending_without_reply=True)
+    try:
+        tg.call("sendMessage", **params)
+    except Exception as e:
+        log(f"could not send status to Telegram: {e}")
+
+
+class Batch:
+    """Runs the waiting paths one after another and keeps reading the bot meanwhile."""
+
+    def __init__(self, tg: Telegram, chat_id: str, workflow_id: str):
+        self.tg, self.chat_id, self.workflow_id = tg, chat_id, workflow_id
+        self.offset = 0
+        self.pending: deque[dict] = deque()
+        self.proc: subprocess.Popen | None = None  # the n8n run in progress
+        self.current: dict | None = None
+        self.stopped = False  # the run in progress was ended by /stop or the time limit
+        self.started = 0
+        self.stops = 0
+        self.announced: set[int] = set()
+
+    def take(self, updates: list[dict]) -> list[dict]:
+        """Confirms the updates at once (a crash then loses a message instead of uploading twice)."""
+        if not updates:
+            return []
+        self.offset = max(u["update_id"] for u in updates) + 1
+        try:
+            self.tg.call("getUpdates", offset=self.offset, timeout=0, limit=1)
+        except Exception as e:
+            log(f"could not confirm the messages in Telegram: {e}")
+        ours = [u["message"] for u in updates
+                if "message" in u and str(u["message"].get("chat", {}).get("id")) == self.chat_id]
+        if len(ours) < len(updates):
+            log(f"ignored {len(updates) - len(ours)} update(s) from other chats")
+        return ours
+
+    def poll(self, wait: int) -> None:
+        try:
+            updates = self.tg.call("getUpdates", offset=self.offset, timeout=wait, allowed_updates=["message"])
+        except Exception as e:  # offline for a moment: the run goes on, try again
+            log(f"could not read Telegram: {e}")
+            time.sleep(wait)
+            return
+        self.add(self.take(updates))
+
+    def add(self, messages: list[dict]) -> None:
+        for m in messages:
+            if is_stop(m):
+                self.stop(m)
+                continue
+            self.pending.append(m)
+            if self.proc is not None:
+                log(f"message {m.get('message_id')} queued: {str(m.get('text', '(no text)'))[:200]!r}")
+                notify(self.tg, self.chat_id, m, "📥 Queued: starts after the current upload.")
+
+    def stop(self, m: dict) -> None:
+        """/stop: end the run in progress and every other n8n process, drop the waiting paths."""
+        self.stops += 1
+        log(f"message {m.get('message_id')}: stop requested")
+        dropped = list(self.pending)
+        self.pending.clear()
+        lines, run_pid = [], None
+        if self.proc is not None and self.proc.poll() is None:
+            run_pid = self.proc.pid
+            kill_tree(run_pid)
+            try:
+                self.proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                pass
+            self.stopped = True
+            lines.append(f"• the upload of {short(self.current)}")
+        try:
+            procs = n8n_processes()[0]
+        except Exception as e:
+            log(f"could not list processes: {e}")
+            procs = []
+        for p in roots(procs):
+            kill_tree(p["pid"])
+            if p["ppid"] != run_pid:  # the run's own n8n is already listed
+                lines.append(f"• {describe(p)}")
+        log("stopped: " + ("; ".join(l[2:] for l in lines) if lines else "nothing was running")
+            + (f"; dropped {len(dropped)} waiting path(s)" if dropped else ""))
+        text = "⏹ Stopped:\n" + "\n".join(lines) if lines else "Nothing to stop: n8n is not running on the PC."
+        if run_pid:
+            text += "\nIf the upload had already finished, the video is in YouTube Studio as private."
+        if dropped:
+            text += "\n\nNot started (send them again if you still want them):\n" + "\n".join(
+                f"• {short(d)}" for d in dropped)
+        notify(self.tg, self.chat_id, m, text)
+
+    def run(self, m: dict) -> None:
+        self.started += 1
+        n, total = self.started, self.started + len(self.pending)
+        log(f"message {m.get('message_id')} ({n} of {total}): {str(m.get('text', '(no text)'))[:200]!r}")
+        notify(self.tg, self.chat_id, m, f"⏳ Starting n8n ({n} of {total}), the folder check follows in "
+                                         f"about 30 s. Send /stop to cancel.")
+        t0 = time.time()
+        since = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(t0 - 2))
+        self.current, self.stopped = m, False
+        with RUN_OUT.open("w", encoding="utf-8", errors="replace") as out:
+            try:
+                self.proc = subprocess.Popen([n8n_command(), "execute", f"--id={self.workflow_id}"],
+                                             env=n8n_env(m), stdout=out, stderr=subprocess.STDOUT, cwd=REPO,
+                                             creationflags=NO_WINDOW)
+            except Exception as e:
+                log(f"n8n run failed to start: {e}")
+                notify(self.tg, self.chat_id, m, f"❌ Could not start n8n: {e}")
+                return
+            while self.proc.poll() is None:
+                if time.time() - t0 > RUN_TIMEOUT_S:
+                    kill_tree(self.proc.pid)
+                    self.stopped = True
+                    log(f"n8n ran longer than {RUN_TIMEOUT_S // 60} minutes; stopped it")
+                    notify(self.tg, self.chat_id, m, f"❌ n8n ran longer than {RUN_TIMEOUT_S // 60} minutes "
+                                                     f"and was stopped. Details on the PC in logs/{RUN_OUT.name}.")
+                    break
+                self.poll(POLL_S)  # a /stop in here ends this run
+            code = self.proc.wait()
+        self.proc = None
+        log(f"n8n run for message {m.get('message_id')} finished with exit {code} after "
+            f"{round(time.time() - t0)} s{' (stopped)' if self.stopped else ''} (output in logs/{RUN_OUT.name})")
+        if code != 0 and not self.stopped:
+            notify(self.tg, self.chat_id, m, f"❌ The n8n run stopped with exit code {code}. "
+                                             f"Details on the PC in logs/{RUN_OUT.name}.")
+        self.clean_up(m, since)
+
+    def clean_up(self, m: dict, since: str) -> None:
+        """Ends n8n processes this run left behind: started during the run, their parent gone."""
+        try:
+            for attempt in (1, 2):
+                procs, alive = n8n_processes()
+                left = [p for p in procs if p["ppid"] not in alive and p["started"] >= since]
+                if not left or attempt == 2:
+                    break
+                time.sleep(5)  # n8n may still be shutting down
+        except Exception as e:
+            log(f"could not list processes: {e}")
+            return
+        if not left:
+            return
+        for p in left:
+            kill_tree(p["pid"])
+        log("n8n did not exit after the run; stopped " + "; ".join(describe(p) for p in left))
+        notify(self.tg, self.chat_id, m, "🧹 n8n did not exit by itself after the run, so it was stopped.")
+
+    def listen(self) -> bool:
+        """After the last path: if n8n still runs, say so and wait for /stop. True if new paths came in."""
+        try:
+            minutes = float(os.environ.get("STOP_LISTEN_MINUTES") or 10)
+        except ValueError:
+            minutes = 10
+        running = running_n8n() if minutes > 0 else []
+        if not running:
+            return False
+        pids = {p["pid"] for p in running}
+        if not pids <= self.announced:  # say it once per n8n process, not after every path
+            self.announced |= pids
+            notify(self.tg, self.chat_id, None, "ℹ️ n8n is still running on the PC:\n"
+                   + "\n".join(f"• {describe(p)}" for p in running)
+                   + f"\nSend /stop within {minutes:g} minutes to shut it down.")
+        deadline = time.time() + minutes * 60
+        log(f"n8n is still running ({'; '.join(describe(p) for p in running)}); listening for /stop until "
+            f"{time.strftime('%H:%M', time.localtime(deadline))}. Close this window to stop listening.")
+        stops, next_check = self.stops, time.time() + 30
+        while time.time() < deadline:
+            self.poll(LISTEN_POLL_S)
+            if self.pending:
+                return True
+            if self.stops != stops or time.time() >= next_check:
+                if not running_n8n():
+                    log("n8n is no longer running")
+                    return False
+                stops, next_check = self.stops, time.time() + 30
+        log("stopped listening for /stop")
+        return False
 
 
 def main() -> int:
@@ -192,7 +474,8 @@ def main() -> int:
 
     lock = acquire_lock()
     if lock is None:
-        return 0  # the previous check is still running a workflow
+        log("another check is still running; it reads new paths and /stop by itself")
+        return 0
 
     tg = Telegram(token, os.environ.get("TELEGRAM_API_BASE", "https://api.telegram.org"))
     workflow_id = os.environ.get("TELEGRAM_WORKFLOW_ID", "YtTelegramIntake01")
@@ -208,43 +491,28 @@ def main() -> int:
     if not updates:
         log("no paths waiting in Telegram")
         return 0
-    messages = [u["message"] for u in updates
-                if "message" in u and str(u["message"].get("chat", {}).get("id")) == chat_id]
-    dropped = len(updates) - len(messages)
     if args.dry_run:
+        messages = [u["message"] for u in updates
+                    if "message" in u and str(u["message"].get("chat", {}).get("id")) == chat_id]
         for m in messages:
-            print(f"waiting: message {m.get('message_id')}: {str(m.get('text', '(no text)'))[:120]}")
-        print(f"{len(messages)} message(s) for this chat, {dropped} other update(s); nothing confirmed")
+            print(f"waiting: message {m.get('message_id')}: {str(m.get('text', '(no text)'))[:120]}"
+                  + (" (stop)" if is_stop(m) else ""))
+        print(f"{len(messages)} message(s) for this chat, {len(updates) - len(messages)} other update(s); "
+              f"nothing confirmed")
         return 0
 
-    # Confirm before running: a crash mid-run then loses one message instead of uploading twice
-    tg.call("getUpdates", offset=max(u["update_id"] for u in updates) + 1, timeout=0, limit=1)
-    if dropped:
-        log(f"ignored {dropped} update(s) from other chats")
+    batch = Batch(tg, chat_id, workflow_id)
+    messages = batch.take(updates)
     if not messages:
         log("no paths waiting in Telegram")
-    for i, m in enumerate(messages, 1):
-        log(f"message {m.get('message_id')} ({i} of {len(messages)}): {str(m.get('text', '(no text)'))[:200]!r}")
-        notify(tg, chat_id, m, f"⏳ Starting n8n ({i} of {len(messages)}), the folder check follows in about 30 s.")
-        try:
-            code = run_workflow(m, workflow_id)
-        except Exception as e:
-            log(f"n8n run failed to start: {e}")
-            notify(tg, chat_id, m, f"❌ Could not start n8n: {e}")
-            continue
-        if code != 0:
-            notify(tg, chat_id, m, f"❌ The n8n run stopped with exit code {code}. "
-                                    f"Details on the PC in logs/{RUN_OUT.name}.")
+        return 0
+    batch.add(messages)  # a /stop among them drops the paths sent before it
+    while True:
+        while batch.pending:
+            batch.run(batch.pending.popleft())
+        if not batch.listen():
+            break
     return 0
-
-
-def notify(tg: Telegram, chat_id: str, message: dict, text: str) -> None:
-    """Short status line to the bot as a reply to the path message; never fatal."""
-    try:
-        tg.call("sendMessage", chat_id=chat_id, text=text,
-                reply_to_message_id=message.get("message_id"), allow_sending_without_reply=True)
-    except Exception as e:
-        log(f"could not send status to Telegram: {e}")
 
 
 if __name__ == "__main__":
