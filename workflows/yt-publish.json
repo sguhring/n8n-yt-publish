@@ -1,0 +1,1186 @@
+{
+  "id": "YtPublishMain001",
+  "name": "YouTube publish (approve before release)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 1 · Intake\nA video lands in `inbox/<channel>/` (optionally with a same-name .jpg/.png thumbnail). The manual trigger runs the same path on a sample file.",
+        "width": 620,
+        "height": 660,
+        "color": 7
+      },
+      "id": "ebab7466-e7e1-5f1f-94a2-f570a8794308",
+      "name": "Note: intake",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 2 · Transcribe and enrich\nfaster-whisper (local, Python) transcribes. A local LLM (Ollama, default gemma4) writes title, description, tags, thumbnail text and chapters, following an optional clip.txt / clip.md dropped next to the video, as schema-checked JSON; a Code node enforces YouTube limits and the channel's fixed footer and tags.",
+        "width": 1500,
+        "height": 660,
+        "color": 5
+      },
+      "id": "a6b66141-d773-5979-8748-0b663856a1ce",
+      "name": "Note: enrich",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        600,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 3 · Upload privately\nThumbnail: the supplied one, or rendered from a frame (Python/Pillow). Upload is always **private**; the custom thumbnail is set via the API.",
+        "width": 1620,
+        "height": 660,
+        "color": 4
+      },
+      "id": "d83f6746-5139-569f-80ba-78a7c8969a2d",
+      "name": "Note: act",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2140,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 4 · Human in the loop\nTelegram gets the thumbnail, title, description and Studio link, then waits up to 48 h for **Publish** or **Keep private**. Nothing becomes public without that click.",
+        "width": 1060,
+        "height": 660,
+        "color": 6
+      },
+      "id": "34361271-1109-5f8a-9ce0-5fab82f8adfb",
+      "name": "Note: approve",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3800,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 5 · Release and log\nPublish sets privacyStatus=public (reports YouTube's audit lock if the API project is not audited). Every run appends one line to `logs/runs.csv`; failures go to the error workflow.",
+        "width": 1100,
+        "height": 660,
+        "color": 3
+      },
+      "id": "e4edf9a8-74db-5aa0-91bd-2c4c680af16f",
+      "name": "Note: release",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        4900,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "triggerOn": "folder",
+        "path": "={{ $env.N8N_YT_REPO }}/inbox",
+        "events": [
+          "add"
+        ],
+        "options": {
+          "awaitWriteFinish": true,
+          "ignoreInitial": true,
+          "depth": 1
+        }
+      },
+      "id": "3005161f-9a80-5528-9195-c4a427808b2e",
+      "name": "New file in inbox",
+      "type": "n8n-nodes-base.localFileTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "019d57ea-374f-5313-9914-51ef64b639a6",
+      "name": "Test with sample video",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "140ee155-76f0-5fd8-9217-3094f630b249",
+              "name": "path",
+              "value": "={{ $env.N8N_YT_REPO }}/inbox/example/sample.mp4",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "859a19c9-46ca-5ba9-9544-3c58662f3ab1",
+      "name": "Sample video path",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "9ebf8009-35a7-501f-9ffd-096b8c2264f6",
+              "leftValue": "={{ String($json.path || '').toLowerCase() }}",
+              "rightValue": "\\.(mp4|mov|mkv|webm|m4v)$",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b6e85c09-4b10-5e1c-975a-39e1d01acdef",
+      "name": "Is it a video?",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7e72ddab-b0cd-5d8a-903d-4f3e47ffb42c",
+              "name": "repo",
+              "value": "={{ String($env.N8N_YT_REPO || '').split('\\\\').join('/') }}",
+              "type": "string"
+            },
+            {
+              "id": "0a31116b-9072-5d3e-b27e-9646bd2f360e",
+              "name": "python",
+              "value": "={{ $env.PYTHON || 'python' }}",
+              "type": "string"
+            },
+            {
+              "id": "dd5f23f2-72d2-521b-88ef-d93cef37d610",
+              "name": "chatId",
+              "value": "={{ $env.TELEGRAM_CHAT_ID }}",
+              "type": "string"
+            },
+            {
+              "id": "b683881c-e5c9-55e0-a487-913a48319e52",
+              "name": "videoPath",
+              "value": "={{ String($json.path).split('\\\\').join('/') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f956b7d6-9d22-5eb2-9190-e11db9b1480e",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=\"{{ $json.python }}\" \"{{ $json.repo }}/scripts/transcribe.py\" --video \"{{ $json.videoPath }}\""
+      },
+      "id": "92e52a23-9a90-5bd5-bacd-dcdce2f3858b",
+      "name": "Transcribe (faster-whisper)",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// transcribe.py prints exactly one JSON object on stdout; its logs go to stderr\nconst { stdout, stderr, exitCode } = $input.first().json;\nconst last = String(stdout || '').trim().split(/\\r?\\n/).pop();\nlet result;\ntry {\n  result = JSON.parse(last);\n} catch (e) {\n  throw new Error(`transcribe.py returned no JSON (exit ${exitCode}): ${String(stderr || '').slice(-400)}`);\n}\nif (!result.ok) throw new Error(`Transcription failed: ${result.error}`);\n\nconst slash = (p) => (p ? String(p).split('\\\\').join('/') : null);\nreturn [{ json: { ...result, video_path: slash(result.video_path), thumbnail_path: slash(result.thumbnail_path), instructions_path: slash(result.instructions_path) } }];\n"
+      },
+      "id": "7ebc009b-9b43-5343-8320-8d25a23a923d",
+      "name": "Parse transcript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $('Config').first().json.repo }}/channels/{{ $json.channel }}.json",
+        "options": {}
+      },
+      "id": "ac5fcfe8-bb0b-53d2-9551-ce02939eb003",
+      "name": "Load channel config",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "fromJson",
+        "options": {}
+      },
+      "id": "dcc87fe4-2711-51ef-923a-398d9ef50e6a",
+      "name": "Parse channel config",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Channel: {{ $('Parse channel config').first().json.data.display_name }}\nMetadata language: {{ $('Parse channel config').first().json.data.metadata_language }}\nSpoken language: {{ $('Parse transcript').first().json.transcript.language }}\nFormat: {{ $('Parse transcript').first().json.is_short ? 'YouTube Short (vertical, under 3 minutes)' : 'regular video' }}, {{ Math.round($('Parse transcript').first().json.duration_s) }} seconds\nFile name: {{ $('Parse transcript').first().json.file_name }}\n\nChannel style guide:\n{{ $('Parse channel config').first().json.data.style }}\n\nExtra instructions from the uploader for this video (may be empty):\n{{ $('Parse transcript').first().json.instructions || 'none' }}\n\nTranscript:\n{{ $('Parse transcript').first().json.transcript.timestamped }}",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "You write YouTube metadata for one channel. You get the channel's style guide and a timestamped transcript of the video.\n\nRules:\n- Write title, description, tags and thumbnail_text in the metadata language given in the request, even if the video is spoken in another language.\n- Title: at most 70 characters, specific and concrete, the most searchable words first. No clickbait, no ALL CAPS, no emojis, no hashtags.\n- Description: 2 to 4 short paragraphs. The first sentence says what the viewer gets and works on its own in search results. Only state what is in the transcript; never invent facts, names, numbers or promises. No hashtags and no links (the channel footer is added later).\n- tags: 8 to 15 search phrases a viewer would type, specific to this video, lower case, no hashtags, no duplicates of each other.\n- thumbnail_text: 2 to 5 words in the metadata language that make someone click, no punctuation except ? or !.\n- chapters: only for videos longer than 3 minutes: at least 3 entries, the first at 0:00, times as m:ss taken from the transcript, short titles. For shorter videos return an empty list.\n- Follow the channel style guide below where it is more specific than these rules.\n- If the request contains extra instructions from the uploader, follow them for the title, wording, focus and tone. They take priority over the channel style guide, but never over the rule against inventing facts.\n- Answer with the JSON object only."
+            }
+          ]
+        }
+      },
+      "id": "4de36a29-8cf8-5a76-814e-824802a6a2dd",
+      "name": "Write metadata (local LLM)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        1760,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "model": "={{ $env.OLLAMA_MODEL || 'gemma4:latest' }}",
+        "options": {
+          "think": false,
+          "temperature": 0.4,
+          "numCtx": 8192,
+          "keepAlive": "10m",
+          "format": "json"
+        }
+      },
+      "id": "eca886e9-ccba-46e4-8ae7-f8a208350269",
+      "name": "Ollama (local)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        1720,
+        520
+      ],
+      "credentials": {
+        "ollamaApi": {
+          "id": "ytpOllamaCred001",
+          "name": "Ollama (local)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"title\": {\n      \"type\": \"string\",\n      \"description\": \"Video title, max 70 characters\"\n    },\n    \"description\": {\n      \"type\": \"string\",\n      \"description\": \"Video description without hashtags or links\"\n    },\n    \"tags\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      },\n      \"description\": \"8 to 15 search tags\"\n    },\n    \"thumbnail_text\": {\n      \"type\": \"string\",\n      \"description\": \"2 to 5 words for the thumbnail\"\n    },\n    \"chapters\": {\n      \"type\": \"array\",\n      \"description\": \"Chapters for videos over 3 minutes, else empty\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"time\": {\n            \"type\": \"string\"\n          },\n          \"title\": {\n            \"type\": \"string\"\n          }\n        },\n        \"required\": [\n          \"time\",\n          \"title\"\n        ]\n      }\n    }\n  },\n  \"required\": [\n    \"title\",\n    \"description\",\n    \"tags\",\n    \"thumbnail_text\",\n    \"chapters\"\n  ]\n}"
+      },
+      "id": "a4a2d370-ba87-52b3-a4d0-94e904581323",
+      "name": "Metadata schema",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [
+        1880,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Deterministic rules on top of the LLM output: YouTube limits, channel footer, tags.\nconst ai = $input.first().json.output;\nconst ch = $('Parse channel config').first().json.data;\nconst t = $('Parse transcript').first().json;\n\nconst oneLine = (s) => String(s ?? '').replace(/[<>]/g, '').replace(/\\s+/g, ' ').trim();\nconst bytes = (s) => encodeURIComponent(s).replace(/%[0-9A-F]{2}/gi, 'x').length;\n\n// Title: max 100 characters, no angle brackets (YouTube rejects them)\nlet title = oneLine(ai.title) || t.base_name;\nif (title.length > 100) title = title.slice(0, 99).replace(/\\s+\\S*$/, '') + '…';\n\n// Description: AI text + chapters (long videos only) + hashtags + channel footer, max 5000 bytes\nconst parts = [String(ai.description || '').replace(/[<>]/g, '').trim()];\nconst chapters = Array.isArray(ai.chapters) ? ai.chapters : [];\nif (!t.is_short && chapters.length >= 3 && /^0?0:00$/.test(String(chapters[0].time).trim())) {\n  parts.push(chapters.map((c) => `${String(c.time).trim()} ${oneLine(c.title)}`).join('\\n'));\n}\nif (ch.hashtags?.length) parts.push(ch.hashtags.join(' '));\nif (ch.description_footer) parts.push(ch.description_footer);\nlet description = parts.filter(Boolean).join('\\n\\n');\nwhile (bytes(description) > 5000) description = description.slice(0, -50);\n\n// Tags: channel defaults first, then AI tags; de-duplicated; YouTube counts quotes around\n// tags with spaces and the commas between tags, total max 500 characters\nconst fold = (s) => s.normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase(); // 'café' == 'cafe'\nconst tagList = [];\nlet budget = 0;\nfor (const raw of [...(ch.default_tags || []), ...(ai.tags || [])]) {\n  const tag = oneLine(raw).replace(/[,#]/g, '').slice(0, 60);\n  if (!tag || tagList.some((x) => fold(x) === fold(tag))) continue;\n  const cost = tag.length + (tag.includes(' ') ? 2 : 0) + (tagList.length ? 1 : 0);\n  if (budget + cost > 480) break;\n  tagList.push(tag);\n  budget += cost;\n}\n\n// Thumbnail text goes on a command line: keep letters, digits, spaces and simple punctuation\nconst thumbnailText = String(ai.thumbnail_text || title)\n  .normalize('NFC')\n  .replace(/[^\\p{L}\\p{N} ?!¿¡.,:'-]/gu, '')\n  .replace(/\\s+/g, ' ')\n  .trim()\n  .slice(0, 60) || 'NEW VIDEO';\n\nreturn [{\n  json: {\n    channel: t.channel,\n    channelName: ch.display_name || t.channel,\n    fileName: t.file_name,\n    baseName: String(t.base_name).replace(/[^A-Za-z0-9._-]+/g, '_'),\n    videoPath: t.video_path,\n    thumbnailPath: t.thumbnail_path,\n    isShort: t.is_short,\n    duration: t.duration_s,\n    title,\n    description,\n    tagList,\n    tags: tagList.join(','),\n    thumbnailText,\n    categoryId: String(ch.category_id || '22'),\n    defaultLanguage: ch.metadata_language || 'en',\n    madeForKids: Boolean(ch.made_for_kids),\n  },\n}];\n"
+      },
+      "id": "4a413b2c-9038-58bc-91c9-b0c7d8517516",
+      "name": "Apply channel rules",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "144eb732-a50c-59d8-af2c-7cf7d029ce03",
+              "leftValue": "={{ Boolean($json.thumbnailPath) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0dc6c930-8bfd-5f0b-8883-5b84294a60f3",
+      "name": "Thumbnail supplied?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=\"{{ $('Config').first().json.python }}\" \"{{ $('Config').first().json.repo }}/scripts/thumbnail.py\" --video \"{{ $json.videoPath }}\" --text \"{{ $json.thumbnailText }}\" --channel-config \"{{ $('Config').first().json.repo }}/channels/{{ $json.channel }}.json\" --out \"{{ $('Config').first().json.repo }}/work/{{ $json.baseName }}-{{ $execution.id }}.jpg\""
+      },
+      "id": "b8be33d5-c7bd-5338-bbee-33f9b753052e",
+      "name": "Render thumbnail",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        2420,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { stdout, stderr, exitCode } = $input.first().json;\nlet result;\ntry {\n  result = JSON.parse(String(stdout || '').trim().split(/\\r?\\n/).pop());\n} catch (e) {\n  throw new Error(`thumbnail.py failed (exit ${exitCode}): ${String(stderr || '').slice(-400)}`);\n}\nif (!result.ok) throw new Error(`thumbnail.py failed: ${result.error}`);\nreturn [{ json: { thumbFile: String(result.thumbnail_path).split('\\\\').join('/'), thumbSource: 'generated' } }];\n"
+      },
+      "id": "33a5768a-ff0e-5e43-a8b2-56b6c9df06f5",
+      "name": "Use rendered thumbnail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "54d41b6b-02f3-55bc-9450-36d32139eb25",
+              "name": "thumbFile",
+              "value": "={{ $json.thumbFile || $json.thumbnailPath }}",
+              "type": "string"
+            },
+            {
+              "id": "74f96963-9465-5dad-8eea-08b1dce0b317",
+              "name": "thumbSource",
+              "value": "={{ $json.thumbSource || 'supplied' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4d6bb258-92fe-5b40-a43f-09f29440753f",
+      "name": "Thumbnail ready",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $('Apply channel rules').first().json.videoPath }}",
+        "options": {}
+      },
+      "id": "548671a2-11e9-5433-8568-32ed80df5c5f",
+      "name": "Read video file",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        2980,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "title": "={{ $('Apply channel rules').first().json.title }}",
+        "regionCode": "DE",
+        "categoryId": "={{ $('Apply channel rules').first().json.categoryId }}",
+        "binaryProperty": "data",
+        "options": {
+          "defaultLanguage": "={{ $('Apply channel rules').first().json.defaultLanguage }}",
+          "description": "={{ $('Apply channel rules').first().json.description }}",
+          "tags": "={{ $('Apply channel rules').first().json.tags }}",
+          "privacyStatus": "private",
+          "notifySubscribers": false,
+          "selfDeclaredMadeForKids": "={{ $('Apply channel rules').first().json.madeForKids }}",
+          "embeddable": true
+        }
+      },
+      "id": "249a404a-f4a4-5a3b-b9db-e0bae07a6527",
+      "name": "Upload to YouTube (private)",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [
+        3200,
+        300
+      ],
+      "credentials": {
+        "youTubeOAuth2Api": {
+          "id": "ytpYouTubeCred01",
+          "name": "YouTube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $('Thumbnail ready').first().json.thumbFile }}",
+        "options": {}
+      },
+      "id": "01829681-7cbe-505f-a7b9-4e54b079bea8",
+      "name": "Read thumbnail",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        3420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId={{ $('Upload to YouTube (private)').first().json.uploadId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "youTubeOAuth2Api",
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "id": "f83b5aa5-fea4-5c07-aa55-90a010c0e73a",
+      "name": "Set custom thumbnail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3640,
+        300
+      ],
+      "credentials": {
+        "youTubeOAuth2Api": {
+          "id": "ytpYouTubeCred01",
+          "name": "YouTube"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Texts for the Telegram preview (HTML) and the approval request (Telegram legacy Markdown)\nconst m = $('Apply channel rules').first().json;\nconst videoId = $('Upload to YouTube (private)').first().json.uploadId;\nconst thumb = $('Set custom thumbnail').first().json;\nconst thumbSource = $('Thumbnail ready').first().json.thumbSource;\nconst tr = $('Parse transcript').first().json;\nconst model = $env.OLLAMA_MODEL || 'gemma4:latest';\nconst instrFile = tr.instructions ? String(tr.instructions_path).split('/').pop() : null;\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst md = (s) => String(s ?? '').replace(/([_*`\\[])/g, '\\\\$1');\nconst studio = `https://studio.youtube.com/video/${videoId}/edit`;\nconst watch = `https://youtu.be/${videoId}`;\nconst thumbLine = thumb.error\n  ? `${thumbSource} thumbnail NOT set on YouTube (channel not verified?)`\n  : `${thumbSource} thumbnail set`;\n\nconst head = [\n  `<b>${esc(m.title)}</b>`,\n  `${esc(m.channelName)} · ${m.isShort ? 'Short' : 'Video'} · ${Math.round(m.duration)} s · uploaded as <b>private</b>`,\n];\nconst tail = [\n  `<i>Written by:</i> ${esc(model)} (local)${instrFile ? ` · instructions from ${esc(instrFile)}` : ''}`,\n  `<i>Tags:</i> ${esc(m.tagList.slice(0, 12).join(', '))}`,\n  `<i>Thumbnail:</i> ${esc(thumbLine)}`,\n  `<a href=\"${studio}\">Open in YouTube Studio</a> · <a href=\"${watch}\">Watch</a>`,\n];\n// Telegram captions are limited to 1024 characters: the description gets what is left\nconst budget = 1000 - [...head, ...tail].join('\\n').length - 4;\nconst desc = m.description.length > budget ? m.description.slice(0, Math.max(0, budget - 1)) + '…' : m.description;\nconst caption = [...head, '', esc(desc), '', ...tail].join('\\n');\n\nconst titleHtml = `<b>${esc(m.title)}</b>`;\nreturn [{\n  json: {\n    videoId,\n    caption,\n    approvalText: `*Publish this video?*\\n${md(m.title)}\\n\\nCheck the preview above or in YouTube Studio. Publish makes it public now, Keep private leaves it visible only to you.`,\n    publishedText: `✅ <b>Published</b>\\n${titleHtml}\\n${watch}`,\n    lockedText: `⚠️ <b>YouTube kept the video private.</b>\\n${titleHtml}\\nUploads from API projects that have not passed YouTube's API audit stay private. Publish it by hand in Studio:\\n${studio}`,\n    failedText: `❌ <b>Could not publish</b>\\n${titleHtml}\\nThe video is still private. Studio: ${studio}`,\n    keptText: `🔒 Kept private: ${titleHtml}`,\n    timeoutText: `⌛ No decision within 48 h, kept private: ${titleHtml}\\n${studio}`,\n  },\n}];\n"
+      },
+      "id": "814eb10f-da32-5218-98b0-edc1d71e3bf5",
+      "name": "Build preview",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3860,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $('Thumbnail ready').first().json.thumbFile }}",
+        "options": {}
+      },
+      "id": "af3095ad-89ab-596b-94cd-4e6840e903ea",
+      "name": "Read thumbnail for preview",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        4080,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "sendPhoto",
+        "chatId": "={{ $('Config').first().json.chatId }}",
+        "binaryData": true,
+        "binaryPropertyName": "data",
+        "additionalFields": {
+          "caption": "={{ $('Build preview').first().json.caption }}",
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "f927ea8e-55e1-5ee1-bc30-ebed94ef3801",
+      "name": "Telegram preview",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4300,
+        300
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "ytpTelegramCred1",
+          "name": "Telegram bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "sendAndWait",
+        "chatId": "={{ $('Config').first().json.chatId }}",
+        "message": "={{ $('Build preview').first().json.approvalText }}",
+        "approvalOptions": {
+          "values": {
+            "approvalType": "double",
+            "approveLabel": "✅ Publish",
+            "disapproveLabel": "🔒 Keep private"
+          }
+        },
+        "options": {
+          "limitWaitTime": {
+            "values": {
+              "limitType": "afterTimeInterval",
+              "resumeAmount": 48,
+              "resumeUnit": "hours"
+            }
+          },
+          "appendAttribution": false
+        }
+      },
+      "id": "e6968c1f-a716-5c1d-a73e-4e5d4e152f0f",
+      "name": "Ask for approval",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4520,
+        300
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "ytpTelegramCred1",
+          "name": "Telegram bot"
+        }
+      },
+      "webhookId": "3d66b30e-176c-52bd-9d12-7db93e705bbc"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ffed8fb1-c2f9-577f-ab73-7dd6d08fb5a4",
+              "leftValue": "={{ Boolean($json.data && $json.data.approved === true) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7521cc19-6e67-5126-8c57-887e353c0789",
+      "name": "Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4740,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "https://www.googleapis.com/youtube/v3/videos?part=status",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "youTubeOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ id: $('Upload to YouTube (private)').first().json.uploadId, status: { privacyStatus: 'public', embeddable: true, license: 'youtube', publicStatsViewable: true, selfDeclaredMadeForKids: $('Apply channel rules').first().json.madeForKids } }) }}",
+        "options": {}
+      },
+      "id": "09c91fe4-464e-573b-9509-bccdd63b18a1",
+      "name": "Make public",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4960,
+        180
+      ],
+      "credentials": {
+        "youTubeOAuth2Api": {
+          "id": "ytpYouTubeCred01",
+          "name": "YouTube"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Config').first().json.chatId }}",
+        "text": "={{ $json.status && $json.status.privacyStatus === 'public' ? $('Build preview').first().json.publishedText : $('Build preview').first().json.lockedText }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "fb56d1d3-33c9-5dc9-b35d-d1dcc8ba2351",
+      "name": "Published",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        5200,
+        100
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "ytpTelegramCred1",
+          "name": "Telegram bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Config').first().json.chatId }}",
+        "text": "={{ $('Build preview').first().json.failedText + '\\n<code>' + String(($json.error && $json.error.message) || $json.error || 'unknown error').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').slice(0, 500) + '</code>' }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "dd08eafd-22f4-5c46-a892-1275624e488e",
+      "name": "Publish failed",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        5200,
+        260
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "ytpTelegramCred1",
+          "name": "Telegram bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Config').first().json.chatId }}",
+        "text": "={{ $json.data ? $('Build preview').first().json.keptText : $('Build preview').first().json.timeoutText }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "d632d335-1c45-5dc2-b125-bd2eb1376116",
+      "name": "Kept private",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        5200,
+        460
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "ytpTelegramCred1",
+          "name": "Telegram bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// One CSV line per run: timestamp,channel,file,video_id,title,outcome,detail,execution_id\nconst m = $('Apply channel rules').first().json;\nconst videoId = $('Upload to YouTube (private)').first().json.uploadId;\nconst ran = (name) => { try { return $(name).isExecuted; } catch (e) { return false; } };\n\nlet outcome;\nlet detail = '';\nif (ran('Published')) {\n  const status = $('Make public').first().json.status || {};\n  outcome = status.privacyStatus === 'public' ? 'published' : 'publish_locked';\n  detail = status.privacyStatus || '';\n} else if (ran('Publish failed')) {\n  outcome = 'publish_failed';\n  const err = $('Make public').first().json.error;\n  detail = (err && err.message) || String(err || '');\n} else {\n  outcome = $('Ask for approval').first().json.data ? 'declined' : 'no_answer';\n}\n\nconst q = (v) => `\"${String(v ?? '').replace(/\"/g, '\"\"').replace(/\\r?\\n/g, ' ')}\"`;\nconst line = [new Date().toISOString(), m.channel, q(m.fileName), videoId, q(m.title), outcome, q(detail), $execution.id].join(',') + '\\n';\nreturn [{ json: { line, outcome } }];\n"
+      },
+      "id": "a43447ef-6d52-56b0-b27c-46c281260906",
+      "name": "Build log line",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "line",
+        "options": {
+          "fileName": "runs.csv"
+        }
+      },
+      "id": "ee255eab-fc35-590c-9c35-485a2e8bfb1b",
+      "name": "To CSV text",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        5660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $('Config').first().json.repo }}/logs/runs.csv",
+        "options": {
+          "append": true
+        }
+      },
+      "id": "ddb80b6c-3de9-5558-b1ad-ec5623f57442",
+      "name": "Append to logs/runs.csv",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        5880,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "New file in inbox": {
+      "main": [
+        [
+          {
+            "node": "Is it a video?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test with sample video": {
+      "main": [
+        [
+          {
+            "node": "Sample video path",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sample video path": {
+      "main": [
+        [
+          {
+            "node": "Is it a video?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is it a video?": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Transcribe (faster-whisper)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribe (faster-whisper)": {
+      "main": [
+        [
+          {
+            "node": "Parse transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse transcript": {
+      "main": [
+        [
+          {
+            "node": "Load channel config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load channel config": {
+      "main": [
+        [
+          {
+            "node": "Parse channel config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse channel config": {
+      "main": [
+        [
+          {
+            "node": "Write metadata (local LLM)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply channel rules": {
+      "main": [
+        [
+          {
+            "node": "Thumbnail supplied?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Thumbnail supplied?": {
+      "main": [
+        [
+          {
+            "node": "Thumbnail ready",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Render thumbnail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render thumbnail": {
+      "main": [
+        [
+          {
+            "node": "Use rendered thumbnail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use rendered thumbnail": {
+      "main": [
+        [
+          {
+            "node": "Thumbnail ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Thumbnail ready": {
+      "main": [
+        [
+          {
+            "node": "Read video file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read video file": {
+      "main": [
+        [
+          {
+            "node": "Upload to YouTube (private)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to YouTube (private)": {
+      "main": [
+        [
+          {
+            "node": "Read thumbnail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read thumbnail": {
+      "main": [
+        [
+          {
+            "node": "Set custom thumbnail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set custom thumbnail": {
+      "main": [
+        [
+          {
+            "node": "Build preview",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build preview": {
+      "main": [
+        [
+          {
+            "node": "Read thumbnail for preview",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read thumbnail for preview": {
+      "main": [
+        [
+          {
+            "node": "Telegram preview",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram preview": {
+      "main": [
+        [
+          {
+            "node": "Ask for approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask for approval": {
+      "main": [
+        [
+          {
+            "node": "Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approved?": {
+      "main": [
+        [
+          {
+            "node": "Make public",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Kept private",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Make public": {
+      "main": [
+        [
+          {
+            "node": "Published",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publish failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Published": {
+      "main": [
+        [
+          {
+            "node": "Build log line",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish failed": {
+      "main": [
+        [
+          {
+            "node": "Build log line",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kept private": {
+      "main": [
+        [
+          {
+            "node": "Build log line",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build log line": {
+      "main": [
+        [
+          {
+            "node": "To CSV text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "To CSV text": {
+      "main": [
+        [
+          {
+            "node": "Append to logs/runs.csv",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Metadata schema": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Write metadata (local LLM)",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write metadata (local LLM)": {
+      "main": [
+        [
+          {
+            "node": "Apply channel rules",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama (local)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Write metadata (local LLM)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "YtPublishError01",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "pinData": {},
+  "active": false,
+  "versionId": "3271d640-f0c0-50d5-819e-d5e1241beeea",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

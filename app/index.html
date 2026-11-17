@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YouTube upload</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1b1f24; --muted: #5f6b7a; --line: #dfe3e8;
+    --accent: #e0362c; --accent-ink: #ffffff; --ok: #1f8a4c; --warn: #b26a00; --err: #c62828;
+    --run: #2f6fde; --chip: #eef1f5; --field: #fbfcfd; --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121417; --panel: #1b1e23; --ink: #e8eaed; --muted: #9aa4b1; --line: #2c3139;
+      --accent: #ff5a4e; --accent-ink: #160604; --ok: #4cc485; --warn: #f0a640; --err: #ff6b6b;
+      --run: #6ea0ff; --chip: #262a31; --field: #16191d; --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 22px; border-bottom: 1px solid var(--line);
+    background: var(--panel); position: sticky; top: 0; z-index: 2; }
+  header .logo { width: 30px; height: 21px; border-radius: 6px; background: var(--accent); display: grid; place-items: center; }
+  header .logo::after { content: ""; border-left: 9px solid var(--accent-ink); border-top: 5.5px solid transparent; border-bottom: 5.5px solid transparent; margin-left: 2px; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 12.5px; }
+  header .spacer { flex: 1; }
+  .badge { font-size: 11.5px; padding: 2px 8px; border-radius: 99px; background: var(--chip); color: var(--muted); white-space: nowrap; }
+  main { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, 1fr); gap: 18px; padding: 18px 22px 40px; max-width: 1400px; margin: 0 auto; }
+  main > section:last-child { position: sticky; top: 74px; align-self: start; }
+  @media (max-width: 980px) { main { grid-template-columns: 1fr; padding: 14px 16px 32px; } main > section:last-child { position: static; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+  .panel + .panel { margin-top: 14px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 12px; font-weight: 600; }
+  label { display: block; font-weight: 600; font-size: 13px; margin: 14px 0 5px; }
+  .labelrow { display: flex; align-items: baseline; gap: 8px; margin: 14px 0 5px; }
+  .labelrow label { margin: 0; }
+  .labelrow .spacer { flex: 1; }
+  .count { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); }
+  .count.over { color: var(--err); font-weight: 600; }
+  .origin { font-size: 11px; padding: 1px 7px; border-radius: 99px; background: var(--chip); color: var(--muted); }
+  .origin.ai { background: color-mix(in srgb, var(--run) 18%, transparent); color: var(--run); }
+  .origin.you { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+  input[type=text], textarea, select, input[type=datetime-local] {
+    width: 100%; font: inherit; color: var(--ink); background: var(--field); border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 10px; outline: none; }
+  input:focus, textarea:focus, select:focus { border-color: var(--run); box-shadow: 0 0 0 3px color-mix(in srgb, var(--run) 20%, transparent); }
+  textarea { resize: vertical; min-height: 64px; }
+  #description { min-height: 150px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > input[type=text] { flex: 1; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+  @media (max-width: 600px) { .grid2 { grid-template-columns: 1fr; } }
+  button { font: inherit; font-weight: 600; border-radius: 8px; border: 1px solid var(--line); background: var(--panel);
+    color: var(--ink); padding: 8px 14px; cursor: pointer; white-space: nowrap; }
+  button:hover:not(:disabled) { border-color: var(--muted); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  button.secondary { background: color-mix(in srgb, var(--run) 12%, var(--panel)); border-color: color-mix(in srgb, var(--run) 40%, var(--line)); color: var(--run); }
+  .help { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg label { margin: 0; font-weight: 500; padding: 6px 12px; cursor: pointer; border-right: 1px solid var(--line); }
+  .seg label:last-child { border-right: 0; }
+  .seg input { display: none; }
+  .seg input:checked + span { color: var(--accent); font-weight: 700; }
+  .seg.disabled { opacity: .45; pointer-events: none; }
+  .check { display: inline-flex; gap: 6px; align-items: center; font-weight: 500; margin: 0; cursor: pointer; }
+  .summary { display: none; margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--chip); font-size: 13px; }
+  .summary.show { display: block; }
+  .summary b { font-weight: 600; }
+  .summary .warn { color: var(--warn); margin-top: 4px; }
+  .summary .bad { color: var(--err); font-weight: 600; }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; align-items: center; }
+  .actions .spacer { flex: 1; }
+  /* workflow */
+  .flowhead { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .flowhead h2 { margin: 0; }
+  .flowhead .spacer { flex: 1; }
+  .elapsed { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12.5px; }
+  .bar { height: 4px; border-radius: 4px; background: var(--chip); overflow: hidden; margin-bottom: 14px; }
+  .bar > div { height: 100%; width: 0; background: var(--run); transition: width .4s; }
+  ol.steps { list-style: none; margin: 0; padding: 0; position: relative; }
+  ol.steps li { display: grid; grid-template-columns: 30px 1fr auto; gap: 10px; align-items: center; padding: 7px 0; position: relative; }
+  ol.steps li:not(:last-child)::before { content: ""; position: absolute; left: 14px; top: 34px; bottom: -8px; width: 2px; background: var(--line); }
+  ol.steps li.done:not(:last-child)::before { background: color-mix(in srgb, var(--ok) 55%, var(--line)); }
+  .dot { width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center;
+    font-size: 12px; font-weight: 700; color: var(--muted); background: var(--panel); z-index: 1; }
+  li.running .dot { border-color: var(--run); color: var(--run); animation: pulse 1.2s ease-in-out infinite; }
+  li.done .dot { border-color: var(--ok); background: var(--ok); color: var(--panel); }
+  li.error .dot { border-color: var(--err); background: var(--err); color: var(--panel); }
+  li.skipped .dot { border-style: dashed; }
+  li.off { opacity: .4; }
+  li.skipped .name, li.off .name { color: var(--muted); }
+  .name { font-weight: 600; }
+  .hint { color: var(--muted); font-size: 12px; }
+  .secs { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; text-align: right; }
+  li.running .secs { color: var(--run); }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--run) 22%, transparent); } }
+  @media (prefers-reduced-motion: reduce) { li.running .dot { animation: none; } }
+  .status { margin-top: 12px; font-size: 13px; }
+  .status.err { color: var(--err); font-weight: 600; }
+  details { margin-top: 12px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
+  pre { white-space: pre-wrap; word-break: break-word; font: 12px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+    background: var(--field); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin: 8px 0 0; max-height: 260px; overflow: auto; }
+  .result { display: none; }
+  .result.show { display: block; }
+  .result .head { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+  .result .links { display: flex; gap: 14px; margin: 6px 0 4px; }
+  .result a { color: var(--run); font-weight: 600; text-decoration: none; }
+  .result a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo" aria-hidden="true"></div>
+  <div>
+    <h1>YouTube upload</h1>
+    <div class="sub">Runs the n8n workflow once per job, then n8n exits.</div>
+  </div>
+  <div class="spacer"></div>
+  <span class="badge" id="conn">ready</span>
+</header>
+
+<main>
+  <section>
+    <div class="panel">
+      <h2>1 · Folder</h2>
+      <div class="row">
+        <input type="text" id="path" placeholder="C:\Videos\short-12  (a folder with one video, optional meta.txt and thumbnails)" spellcheck="false">
+        <button id="pick">Choose…</button>
+        <button id="check">Check</button>
+      </div>
+      <div class="summary" id="summary"></div>
+    </div>
+
+    <div class="panel">
+      <h2>2 · Text</h2>
+      <div class="help">Empty fields come from the folder's text file. If the file doesn't have them either, the local LLM writes them. YouTube's limits are counted as you type.</div>
+
+      <div class="labelrow"><label for="title">Title</label><span class="origin" data-for="title"></span><span class="spacer"></span><span class="count" id="c-title"></span></div>
+      <input type="text" id="title" maxlength="100" placeholder="empty: from meta.txt, else written by the LLM">
+
+      <div class="labelrow"><label for="description">Description</label><span class="origin" data-for="description"></span><span class="spacer"></span><span class="count" id="c-description"></span></div>
+      <textarea id="description" placeholder="empty: from meta.txt, else written by the LLM (with the channel's hashtags and footer)"></textarea>
+
+      <div class="labelrow"><label for="tags">Tags</label><span class="origin" data-for="tags"></span><span class="spacer"></span><span class="count" id="c-tags"></span></div>
+      <input type="text" id="tags" placeholder="comma separated, e.g. kitchen tips, quick recipes">
+
+      <div class="labelrow"><label for="instructions">Prompt for the LLM</label><span class="origin" data-for="instructions"></span><span class="spacer"></span><span class="count" id="c-instructions"></span></div>
+      <textarea id="instructions" maxlength="2000" placeholder="Optional hints when the LLM writes the missing parts, e.g. 'Title as a question, mention the cooking time'"></textarea>
+    </div>
+
+    <div class="panel">
+      <h2>3 · Publishing</h2>
+      <div class="grid2">
+        <div>
+          <label for="channel">Channel</label>
+          <select id="channel"></select>
+        </div>
+        <div>
+          <label for="related">Linked video</label>
+          <input type="text" id="related" placeholder="empty: latest long video (Shorts)" spellcheck="false">
+          <label class="check" style="margin-top:6px"><input type="checkbox" id="nolink"> no linked video</label>
+        </div>
+      </div>
+      <label>Visibility</label>
+      <div class="row" style="flex-wrap:wrap; gap:14px">
+        <div class="seg" id="privacy">
+          <label><input type="radio" name="privacy" value="private"><span>Private</span></label>
+          <label><input type="radio" name="privacy" value="unlisted"><span>Unlisted</span></label>
+          <label><input type="radio" name="privacy" value="public"><span>Public</span></label>
+        </div>
+        <label class="check"><input type="checkbox" id="schedule"> publish at</label>
+        <input type="datetime-local" id="when" style="width:auto" disabled>
+      </div>
+      <div class="help" id="vishelp">Always uploaded private first. It only switches to unlisted or public after the thumbnail is set.</div>
+
+      <div class="actions">
+        <button class="secondary" id="preview">Write missing text with AI</button>
+        <span class="help" style="margin:0">checks everything, no upload</span>
+        <span class="spacer"></span>
+        <button class="primary" id="upload">Upload</button>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="panel">
+      <div class="flowhead">
+        <h2>Workflow</h2><span class="badge" id="mode">idle</span>
+        <span class="spacer"></span>
+        <span class="elapsed" id="elapsed"></span>
+        <button id="cancel" style="display:none; padding:4px 10px">Stop</button>
+      </div>
+      <div class="bar"><div id="bar"></div></div>
+      <ol class="steps" id="steps"></ol>
+      <div class="status" id="status"></div>
+      <details id="logbox"><summary>n8n log</summary><pre id="log"></pre></details>
+    </div>
+
+    <div class="panel result" id="result">
+      <h2>Result</h2>
+      <div class="head" id="r-head"></div>
+      <div class="links" id="r-links"></div>
+      <pre id="r-text"></pre>
+    </div>
+  </section>
+</main>
+
+<script>
+const TOKEN = "__APP_TOKEN__";
+const $ = (id) => document.getElementById(id);
+const FIELDS = ["title", "description", "tags", "instructions"];
+const LIMIT = { title: 100, description: 5000, tags: 500, instructions: 2000 };
+const origin = { title: "", description: "", tags: "", instructions: "" };   // "", "file", "ai", "you"
+let info = { steps: [] }, channelTouched = false, visTouched = false, polling = null, lastRunId = null, checked = null;
+
+async function api(path, body) {
+  const opt = { headers: { "X-App-Token": TOKEN } };
+  if (body !== undefined) { opt.method = "POST"; opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
+  const r = await fetch(path, opt);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok && !data.error) data.error = `HTTP ${r.status}`;
+  return data;
+}
+
+// ---------- counters (YouTube counts bytes for the description; tags with spaces get quotes)
+const bytes = (s) => new TextEncoder().encode(s).length;
+const tagCost = (s) => s.split(",").map((t) => t.trim().replace(/^#/, "")).filter(Boolean)
+  .reduce((sum, t, i) => sum + t.length + (t.includes(" ") ? 2 : 0) + (i ? 1 : 0), 0);
+function count(key) {
+  const v = $(key).value;
+  const n = key === "description" ? bytes(v) : key === "tags" ? tagCost(v) : v.length;
+  const el = $("c-" + key);
+  const brackets = key === "title" && /[<>]/.test(v);   // YouTube rejects < and > in titles
+  el.textContent = `${n} / ${LIMIT[key]}${key === "description" ? " bytes" : ""}${brackets ? " · no < or >" : ""}`;
+  el.classList.toggle("over", n > LIMIT[key] || brackets);
+  const o = document.querySelector(`.origin[data-for=${key}]`);
+  o.className = "origin " + origin[key];
+  o.textContent = { file: "from text file", ai: "AI draft", you: "typed" }[origin[key]] || (v ? "" : "empty");
+  o.style.display = o.textContent ? "" : "none";
+  updateButtons();
+}
+function overLimit() {
+  return FIELDS.some((k) => $("c-" + k).classList.contains("over")) || /[<>]/.test($("title").value);
+}
+
+// ---------- job from the form
+function privacy() { return (document.querySelector("input[name=privacy]:checked") || {}).value || "private"; }
+function job() {
+  const j = { path: $("path").value.trim().replace(/^"+|"+$/g, "") };
+  // visibility only when set here; otherwise the text file or DEFAULT_PRIVACY decides
+  if (visTouched) j.options = $("schedule").checked && $("when").value ? $("when").value : privacy();
+  for (const k of FIELDS) if ((origin[k] === "you" || origin[k] === "ai") && $(k).value.trim()) j[k] = $(k).value.trim();
+  if (channelTouched && $("channel").value) j.channel = $("channel").value;
+  if ($("nolink").checked) j.related = "none";
+  else if ($("related").value.trim()) j.related = $("related").value.trim();
+  return j;
+}
+
+// ---------- folder check
+async function check() {
+  const j = job();
+  if (!j.path) return;
+  $("summary").className = "summary show";
+  $("summary").textContent = "Checking…";
+  const r = await api("/api/check", { job: j });
+  checked = r;
+  const s = $("summary");
+  s.replaceChildren();
+  if (!r.ok) {
+    const b = document.createElement("div"); b.className = "bad"; b.textContent = r.error || "Check failed."; s.append(b);
+    updateButtons(); return;
+  }
+  const line = (html) => { const d = document.createElement("div"); d.textContent = html; s.append(d); return d; };
+  const head = line(""); const b = document.createElement("b"); b.textContent = r.file_name; head.append(b,
+    ` · ${r.is_short ? "Short" : "Video"} · ${Math.round(r.duration_s)} s · ${r.size_mb} MB · channel ${r.channel}`);
+  line(`Text file: ${r.meta_file || "none"} · Thumbnails: ${(r.thumbnails || []).map((t) => `${t.label} = ${t.name}`).join(", ") || "none, YouTube picks a frame"}`);
+  const rl = r.related || {};
+  line(`Linked video: ${rl.mode === "video" ? rl.video_id : rl.mode === "latest" ? "latest long video on the channel" : "none"} (${rl.source})`);
+  line(`Visibility: ${r.publish_at_local ? `private until ${r.publish_at_local}, then public` : r.privacy} (${r.privacy_source})`);
+  if ((r.missing || []).length) line(`The LLM will write: ${r.missing.join(", ")}`);
+  for (const w of r.warnings || []) { const d = line("⚠️ " + w); d.className = "warn"; }
+  // show what the text file holds, unless the field was typed or drafted here
+  const fromFile = { title: r.title, description: r.description, tags: (r.tags || []).join(", "), instructions: r.instructions };
+  for (const k of FIELDS) {
+    if (origin[k] === "you" || origin[k] === "ai") continue;
+    $(k).value = (r.field_source || {})[k] === "file" ? (fromFile[k] || "") : "";
+    origin[k] = $(k).value ? "file" : "";
+    count(k);
+  }
+  if (!channelTouched && r.channel) $("channel").value = r.channel;
+  if (!visTouched) {   // show what the folder asks for
+    const p = document.querySelector(`input[name=privacy][value=${r.privacy}]`);
+    if (p) p.checked = true;
+    $("schedule").checked = Boolean(r.publish_at);
+    if (r.publish_at) {
+      const d = new Date(r.publish_at);
+      $("when").value = new Date(d - d.getTimezoneOffset() * 60e3).toISOString().slice(0, 16);
+    }
+    syncVisibility();
+  }
+  updateButtons();
+}
+
+// ---------- workflow drawing
+function drawSteps(steps) {
+  const ol = $("steps");
+  ol.replaceChildren(...steps.map((s, i) => {
+    const li = document.createElement("li");
+    li.className = s.status || "waiting";
+    const dot = document.createElement("div"); dot.className = "dot";
+    dot.textContent = { done: "✓", error: "✕", skipped: "–" }[s.status] || String(i + 1);
+    const txt = document.createElement("div");
+    const n = document.createElement("div"); n.className = "name"; n.textContent = s.label;
+    const h = document.createElement("div"); h.className = "hint";
+    h.textContent = s.status === "skipped" ? "skipped, " + s.hint : s.status === "off" ? "upload only" : s.hint;
+    txt.append(n, h);
+    const sec = document.createElement("div"); sec.className = "secs";
+    sec.textContent = s.seconds != null ? `${s.seconds} s` : s.status === "running" ? "…" : "";
+    li.append(dot, txt, sec);
+    return li;
+  }));
+  const relevant = steps.filter((s) => s.status !== "off");
+  const finished = relevant.filter((s) => ["done", "skipped", "error"].includes(s.status)).length;
+  $("bar").style.width = relevant.length ? `${Math.round(100 * finished / relevant.length)}%` : "0";
+}
+
+function showResult(st) {
+  const res = st.result || {};
+  const box = $("result");
+  const head = $("r-head"), links = $("r-links"), text = $("r-text");
+  links.replaceChildren();
+  box.className = "panel result show";
+  if (st.mode === "preview") {
+    const f = res.final;
+    if (!f) { box.className = "panel result"; return; }
+    head.textContent = "Draft ready: check the text on the left, then upload";
+    // fill the form with the draft: generated fields become "AI draft", the file's text stays
+    const val = { title: f.title, description: f.description, tags: (f.tagList || []).join(", ") };
+    for (const k of ["title", "description", "tags"]) {
+      if (origin[k] === "you") continue;
+      if (val[k] && val[k] !== $(k).value) { $(k).value = val[k]; origin[k] = f.source && f.source[k] === "file" && k !== "description" ? "file" : "ai"; }
+      count(k);
+    }
+    const rv = f.related || {};
+    text.textContent = [
+      `Linked video: ${rv.ok ? `${rv.title || rv.id}  ${rv.url}` : rv.mode === "none" ? "none" : "none added (" + (rv.note || "lookup skipped") + ")"}`,
+      `Visibility: ${f.publishAtLocal ? "private until " + f.publishAtLocal + ", then public" : f.privacy}`,
+      `Tags (${(f.tagList || []).length}): ${(f.tagList || []).join(", ")}`,
+    ].join("\n");
+    return;
+  }
+  const r = res.reply;
+  if (!r) { box.className = "panel result"; return; }
+  const lines = (r.text || "").split("\n");
+  head.textContent = lines[0] || r.outcome;
+  text.textContent = lines.slice(1).join("\n").trim();
+  if (r.videoId) {
+    for (const [label, url] of [["Watch", `https://youtu.be/${r.videoId}`], ["YouTube Studio", `https://studio.youtube.com/video/${r.videoId}/edit`]]) {
+      const a = document.createElement("a"); a.href = url; a.target = "_blank"; a.rel = "noopener"; a.textContent = label; links.append(a);
+    }
+  }
+}
+
+async function poll() {
+  const st = await api("/api/state").catch(() => null);
+  if (!st) { $("conn").textContent = "app closed?"; return; }
+  $("conn").textContent = "ready";
+  if (st.status === "idle") return;
+  drawSteps(st.steps);
+  $("mode").textContent = st.mode === "preview" ? "draft · no upload" : "upload";
+  $("elapsed").textContent = `${st.elapsed} s`;
+  $("log").textContent = (st.lines || []).join("\n");
+  const running = st.status === "running";
+  $("cancel").style.display = running ? "" : "none";
+  $("status").className = "status" + (st.status === "error" ? " err" : "");
+  const booting = running && !st.steps.some((s) => !["waiting", "off"].includes(s.status));
+  $("status").textContent = booting ? "Starting n8n (20 to 30 s)…" : running ? "Running…" : st.status === "done" ? (st.mode === "preview" ? "Done. Nothing was uploaded." : "Done.")
+    : st.status === "cancelled" ? "Stopped." : "Stopped with an error: " + (st.error || "");
+  if (!running) {
+    clearInterval(polling); polling = null;
+    if (lastRunId !== st.id) { lastRunId = st.id; showResult(st); }
+  }
+  updateButtons(running);
+}
+
+async function start(mode) {
+  const j = job();
+  if (!j.path) return;
+  if (mode === "upload") {
+    const p = $("schedule").checked && $("when").value ? `scheduled for ${$("when").value.replace("T", " ")}` : privacy();
+    if (p !== "private" && !confirm(`Upload and make it ${p}?`)) return;
+  }
+  $("result").className = "panel result";
+  const r = await api("/api/run", { mode, job: j });
+  if (!r.ok) { $("status").className = "status err"; $("status").textContent = r.error || "Could not start."; return; }
+  lastRunId = null;
+  drawSteps(info.steps.map((s) => ({ ...s, status: s.upload_only && mode === "preview" ? "off" : "waiting" })));
+  updateButtons(true);
+  if (!polling) polling = setInterval(poll, 700);
+  poll();
+}
+
+function updateButtons(running = polling !== null) {
+  const hasPath = Boolean($("path").value.trim());
+  $("preview").disabled = running || !hasPath || overLimit();
+  $("upload").disabled = running || !hasPath || overLimit();
+  $("check").disabled = running || !hasPath;
+  $("pick").disabled = running;
+}
+
+function syncVisibility() {
+  const sched = $("schedule").checked;
+  $("when").disabled = !sched;
+  $("privacy").classList.toggle("disabled", sched);
+  if (sched && !$("when").value) {
+    const d = new Date(Date.now() + 24 * 3600e3); d.setMinutes(0, 0, 0); d.setHours(18);
+    $("when").value = new Date(d - d.getTimezoneOffset() * 60e3).toISOString().slice(0, 16);
+  }
+  const min = new Date(Date.now() + 20 * 60e3);
+  $("when").min = new Date(min - min.getTimezoneOffset() * 60e3).toISOString().slice(0, 16);
+  $("vishelp").textContent = sched
+    ? "Private until this time (PC clock), then YouTube publishes it by itself. At least 15 minutes ahead."
+    : "Always uploaded private first. It only switches to unlisted or public after the thumbnail is set.";
+}
+
+// ---------- wiring
+for (const k of FIELDS) $(k).addEventListener("input", () => { origin[k] = $(k).value ? "you" : ""; count(k); });
+$("channel").addEventListener("change", () => { channelTouched = true; });
+$("pick").addEventListener("click", async () => {
+  $("pick").disabled = true;
+  const r = await api("/api/pick-folder", {});
+  $("pick").disabled = false;
+  if (r.path) { $("path").value = r.path; for (const k of FIELDS) if (origin[k] === "file") { origin[k] = ""; $(k).value = ""; } check(); }
+});
+$("check").addEventListener("click", check);
+$("path").addEventListener("keydown", (e) => { if (e.key === "Enter") check(); });
+$("path").addEventListener("input", () => updateButtons());
+$("preview").addEventListener("click", () => start("preview"));
+$("upload").addEventListener("click", () => start("upload"));
+$("cancel").addEventListener("click", () => api("/api/cancel", {}));
+$("schedule").addEventListener("change", () => { visTouched = true; syncVisibility(); });
+$("when").addEventListener("change", () => { visTouched = true; });
+document.querySelectorAll("input[name=privacy]").forEach((el) => el.addEventListener("change", () => { visTouched = true; }));
+$("nolink").addEventListener("change", () => { $("related").disabled = $("nolink").checked; });
+window.addEventListener("pagehide", () => navigator.sendBeacon("/api/bye"));
+
+(async () => {
+  info = await api("/api/info");
+  const sel = $("channel");
+  for (const c of info.channels || []) {
+    const o = document.createElement("option"); o.value = c.id; o.textContent = `${c.name} (${c.id})`; sel.append(o);
+  }
+  if (info.default_channel) sel.value = info.default_channel;
+  const p = document.querySelector(`input[name=privacy][value=${info.default_privacy || "private"}]`);
+  (p || document.querySelector("input[name=privacy][value=private]")).checked = true;
+  if (info.default_related === "none") $("related").placeholder = "empty: no linked video (DEFAULT_RELATED=none)";
+  drawSteps(info.steps.map((s) => ({ ...s, status: "waiting" })));
+  for (const k of FIELDS) count(k);
+  syncVisibility();
+  updateButtons(false);
+  const st = await api("/api/state");   // a run started before a reload
+  if (st.status === "running") { polling = setInterval(poll, 700); }
+  if (st.status && st.status !== "idle") poll();
+  setInterval(() => { if (!polling) api("/api/state").then(() => { $("conn").textContent = "ready"; }).catch(() => { $("conn").textContent = "app closed?"; }); }, 30000);
+})();
+</script>
+</body>
+</html>

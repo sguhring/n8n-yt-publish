@@ -1,0 +1,153 @@
+{
+  "id": "YtPublishError01",
+  "name": "YouTube publish – error handler",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Error handler\nRuns when any step of the publish workflow fails (production runs). Logs the failure to `logs/runs.csv` and sends a Telegram alert with the failing step.",
+        "width": 900,
+        "height": 420,
+        "color": 3
+      },
+      "id": "d3104796-3038-542f-a3ae-2cf25f6cd22f",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        40
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "f49a7190-5baf-5947-b1d7-b6afb02d43fa",
+      "name": "On workflow error",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Error Trigger payload -> Telegram text (HTML) + a CSV line for logs/runs.csv\nconst { execution = {}, workflow = {} } = $input.first().json;\nconst err = execution.error || {};\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst message = String(err.message || err.description || 'unknown error');\n\nconst text = [\n  `⚠️ <b>${esc(workflow.name || 'Workflow')} failed</b>`,\n  `Step: <i>${esc(execution.lastNodeExecuted || '?')}</i>`,\n  `<code>${esc(message.slice(0, 600))}</code>`,\n  execution.url ? `Execution: ${esc(execution.url)}` : '',\n].filter(Boolean).join('\\n');\n\nconst q = (v) => `\"${String(v ?? '').replace(/\"/g, '\"\"').replace(/\\r?\\n/g, ' ')}\"`;\nconst line = [new Date().toISOString(), '', '', '', '', 'error', q(`${execution.lastNodeExecuted || '?'}: ${message}`), execution.id || ''].join(',') + '\\n';\nreturn [{ json: { text, line } }];\n"
+      },
+      "id": "f6e33b0f-7ce0-5c7f-8be3-55ef18437dca",
+      "name": "Format alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "line",
+        "options": {
+          "fileName": "runs.csv"
+        }
+      },
+      "id": "ee255eab-fc35-590c-9c35-485a2e8bfb1b",
+      "name": "To CSV text",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ String($env.N8N_YT_REPO || '').split('\\\\').join('/') }}/logs/runs.csv",
+        "options": {
+          "append": true
+        }
+      },
+      "id": "ddb80b6c-3de9-5558-b1ad-ec5623f57442",
+      "name": "Append to logs/runs.csv",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "={{ $('Format alert').first().json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "c64a2cdb-6f36-593d-9909-45775ff69056",
+      "name": "Telegram alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        440,
+        360
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "ytpTelegramCred1",
+          "name": "Telegram bot"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "On workflow error": {
+      "main": [
+        [
+          {
+            "node": "Format alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format alert": {
+      "main": [
+        [
+          {
+            "node": "To CSV text",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Telegram alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "To CSV text": {
+      "main": [
+        [
+          {
+            "node": "Append to logs/runs.csv",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "active": false,
+  "versionId": "d0508805-7eb4-5abd-935c-5cd4314bbdc2",
+  "meta": {},
+  "tags": []
+}

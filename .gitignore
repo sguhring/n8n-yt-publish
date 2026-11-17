@@ -1,0 +1,22 @@
+# secrets and local state
+.env
+*.credentials.json
+credentials/
+
+# your channels stay local; channels/example.json is the made-up demo to copy
+channels/*.json
+!channels/example.json
+
+# media and run artefacts
+inbox/**
+!inbox/example/
+!inbox/example/.gitkeep
+work/
+# logs hold message text and folder paths
+logs/*
+!logs/.gitkeep
+
+# python
+__pycache__/
+*.pyc
+.venv/

@@ -1,0 +1,1150 @@
+{
+  "id": "YtDesktopUpload01",
+  "name": "YouTube upload from the desktop app",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 1 · Job from the desktop app → folder check\n`app/server.py` (desktop shortcut 'YouTube upload (Desktop)') starts this workflow once per job with `n8n execute`, the job in `DESKTOP_JOB`: folder path, visibility or publish date, and the title, description, tags and LLM instructions typed in the app (each optional). It reads n8n's debug log to show each step live. `scripts/intake.py --job-hex` finds the video, the optional text file and up to two thumbnails; fields typed in the app win over the text file.",
+        "height": 640,
+        "width": 1080
+      },
+      "id": "5033c176-1b94-58d0-8096-466fe6d495a6",
+      "name": "Note: intake",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 2 · Linked video, fill in what is missing\nShorts link the channel's latest public video longer than 3 minutes at the top of the description (or the video named after the path / in `Related:`; `no link` skips it). Three read-only YouTube API calls (channels → uploads playlist → videos); a failed lookup only skips the link. The Shorts 'Related video' field itself has no API, the reply says what to pick in Studio.\n\nFields from the text file are used as written. Only if title, description or tags are missing: faster-whisper transcribes the video and the local LLM (Ollama) writes the missing fields with the channel's preset prompt and style guide.",
+        "height": 640,
+        "width": 2620,
+        "color": 5
+      },
+      "id": "0aec342b-1d59-5821-a4f4-fa082ec115df",
+      "name": "Note: fill",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 3 · Upload, set visibility, reply, log\nUpload to YouTube as **private**, set thumbnail A, then switch to the wanted visibility (word after the path in the message, `Privacy:` in the text file, or `DEFAULT_PRIVACY`), so a public video never shows without its thumbnail. A date and time (`18.11. 18:00`) schedules it instead: private until then, then public (YouTube's publishAt). The YouTube API takes one thumbnail per video, so B is for A/B testing in YouTube Studio (long videos only; Shorts have no thumbnail test). Reply in Telegram with links, append a line to `logs/runs.csv`.",
+        "height": 640,
+        "width": 2980,
+        "color": 4
+      },
+      "id": "e055380f-8fc3-5b1a-9c89-8887b7fa86d6",
+      "name": "Note: upload",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3680,
+        40
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "c74d880f-e246-5e8e-9bea-7d6ba1192954",
+      "name": "Started by the desktop app",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// The desktop app (app/server.py) passes one job as JSON in DESKTOP_JOB:\n// { path, options, title, description, tags, instructions, channel }\nlet job = {};\ntry { job = JSON.parse($env.DESKTOP_JOB || '{}'); } catch (e) { job = {}; }\nconst path = String(job.path || '').trim();\nconst isPath = /^[a-z]:[\\\\/]/i.test(path) || /^\\\\\\\\/.test(path);\n\n// The job reaches the shell only as hex (UTF-8), so quotes, & or % in it cannot run anything\nconst jobHex = encodeURIComponent(JSON.stringify(job)).replace(/%([0-9A-F]{2})|([\\s\\S])/g,\n  (m, h, c) => (h ? h.toLowerCase() : c.charCodeAt(0).toString(16).padStart(2, '0')));\n\nreturn [{ json: {\n  chatId: '',\n  messageId: null,\n  isPath,\n  path,\n  jobHex,\n  repo: String($env.N8N_YT_REPO || '').split('\\\\').join('/'),\n  python: $env.PYTHON || 'python',\n} }];\n"
+      },
+      "id": "b8d2c0e1-e3f6-54ba-b88f-423164a19fc9",
+      "name": "Read job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a818288a-7ca9-5427-9981-5661184ca611",
+              "leftValue": "={{ $json.isPath }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f6b0304d-251d-5d85-9355-377a8e9fe00a",
+      "name": "Is it a path?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "2daaaf99-29c5-5bee-afeb-573bbb19f7a4",
+      "name": "Not a path",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        660,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=\"{{ $json.python }}\" \"{{ $json.repo }}/scripts/intake.py\" --job-hex {{ $json.jobHex }} --repo \"{{ $json.repo }}\""
+      },
+      "id": "a05585f5-ab67-539b-8edc-7b47cdca8dc6",
+      "name": "Check folder (intake.py)",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// intake.py prints one JSON object on stdout; its logs go to stderr\nconst { stdout, stderr, exitCode } = $input.first().json;\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nlet r;\ntry {\n  r = JSON.parse(String(stdout || '').trim().split(/\\r?\\n/).pop());\n} catch (e) {\n  r = { ok: false, error: `intake.py returned no result (exit ${exitCode}): ${String(stderr || '').slice(-300)}` };\n}\nif (!r.ok) {\n  return [{ json: { ok: false, error: r.error, errorText: `❌ <b>Nothing uploaded.</b>\\n${esc(r.error)}` } }];\n}\n\nconst missing = r.missing || [];\nconst model = $env.OLLAMA_MODEL || 'gemma4:latest';\nconst field = (key, extra = '') => missing.includes(key)\n  ? '➖ missing, the local LLM writes it'\n  : (r.field_source || {})[key] === 'app' ? `✅ typed in the app${extra}` : `✅ from ${esc(r.meta_file)}${extra}`;\nconst thumbs = (r.thumbnails || []).map((t) => `${t.label} = ${esc(t.name)}`).join(', ') || 'none, YouTube picks a frame';\nconst rl = r.related || {};\nconst linked = (rl.mode === 'video' ? esc(rl.video_id) : rl.mode === 'latest' ? 'latest long video on the channel' : 'none')\n  + (rl.source ? ` (${esc(rl.source)})` : '');\nconst lines = [\n  `📂 <b>${esc(r.file_name)}</b>`,\n  `${r.is_short ? 'Short' : 'Video'} · ${Math.round(r.duration_s)} s · ${r.size_mb} MB · channel ${esc(r.channel)}`,\n  '',\n  `<i>Title:</i> ${field('title')}`,\n  `<i>Description:</i> ${field('description')}`,\n  `<i>Tags:</i> ${field('tags', ` (${(r.tags || []).length})`)}`,\n  `<i>Thumbnails:</i> ${thumbs}`,\n  `<i>Linked video:</i> ${linked}`,\n  `<i>Visibility:</i> ${r.publish_at ? `private until ${esc(r.publish_at_local)}, then public` : esc(r.privacy)} (${esc(r.privacy_source)})`,\n  ...(r.warnings || []).map((w) => `⚠️ ${esc(w)}`),\n  '',\n  (missing.length ? `Next: transcribe, let ${esc(model)} write the missing parts (1 to 2 minutes), then upload` : 'Next: upload')\n    + (r.publish_at ? `, set the thumbnail, then schedule it for ${esc(r.publish_at_local)}.`\n      : r.privacy === 'private' ? ' as private.' : `, set the thumbnail, then make it ${esc(r.privacy)}.`),\n];\nreturn [{ json: { ...r, statusText: lines.join('\\n') } }];\n"
+      },
+      "id": "9afe4005-26c1-522f-8b8c-f530e97ffe92",
+      "name": "Parse intake",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a0fcf99c-f499-53f5-a453-8b2a1b806960",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "fefa1645-c8e7-57fe-b530-2af4adae21ea",
+      "name": "Folder OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        300
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "3f2b4762-1a00-555e-8da3-846fde2e8958",
+      "name": "Problem (shown in the app)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        520
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "f892860d-e158-5bc0-8794-2a3396a2dfa1",
+      "name": "Status (shown in the app)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $('Read job').first().json.repo }}/channels/{{ $('Parse intake').first().json.channel }}.json",
+        "options": {}
+      },
+      "id": "074f98c3-51c6-5abf-82c4-8eb0e153bae0",
+      "name": "Load channel config",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "fromJson",
+        "options": {}
+      },
+      "id": "69f3e7ac-fcdb-5a7b-8a60-566db713b547",
+      "name": "Parse channel config",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "6c76d93e-9a90-5b98-9b1f-144beff68537",
+              "leftValue": "={{ ($('Parse intake').first().json.missing || []).length > 0 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6b103678-7298-5666-92f3-08228d97c222",
+      "name": "Anything missing?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=\"{{ $('Read job').first().json.python }}\" \"{{ $('Read job').first().json.repo }}/scripts/transcribe.py\" --video \"{{ $('Parse intake').first().json.video_path }}\" --channel \"{{ $('Parse intake').first().json.channel }}\""
+      },
+      "id": "33276c69-4c9f-5e51-812c-bb493ab58c6f",
+      "name": "Transcribe (faster-whisper)",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        3300,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { stdout, stderr, exitCode } = $input.first().json;\nlet result;\ntry {\n  result = JSON.parse(String(stdout || '').trim().split(/\\r?\\n/).pop());\n} catch (e) {\n  throw new Error(`transcribe.py returned no JSON (exit ${exitCode}): ${String(stderr || '').slice(-400)}`);\n}\nif (!result.ok) throw new Error(`Transcription failed: ${result.error}`);\nreturn [{ json: { transcript: result.transcript } }];\n"
+      },
+      "id": "37393598-405f-5726-99dc-a71287f46bb2",
+      "name": "Parse transcript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Channel: {{ $('Parse channel config').first().json.data.display_name }}\nMetadata language: {{ $('Parse channel config').first().json.data.metadata_language }}\nSpoken language: {{ $('Parse transcript').first().json.transcript.language }}\nFormat: {{ $('Parse intake').first().json.is_short ? 'YouTube Short (vertical, under 3 minutes)' : 'regular video' }}, {{ Math.round($('Parse intake').first().json.duration_s) }} seconds\nFile name: {{ $('Parse intake').first().json.file_name }}\n\nChannel style guide:\n{{ $('Parse channel config').first().json.data.style }}\n\nFields the uploader already wrote (keep them; MISSING means you write it):\nTitle: {{ $('Parse intake').first().json.title || 'MISSING' }}\nDescription: {{ $('Parse intake').first().json.description || 'MISSING' }}\nTags: {{ ($('Parse intake').first().json.tags || []).join(', ') || 'MISSING' }}\n\nExtra instructions from the uploader for this video (may be empty):\n{{ $('Parse intake').first().json.instructions || 'none' }}\n\nTranscript:\n{{ $('Parse transcript').first().json.transcript.timestamped }}",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "You write YouTube metadata for one channel. You get the channel's style guide and a timestamped transcript of the video.\n\nRules:\n- Write title, description, tags and thumbnail_text in the metadata language given in the request, even if the video is spoken in another language.\n- Title: at most 70 characters, specific and concrete, the most searchable words first. No clickbait, no ALL CAPS, no emojis, no hashtags.\n- Description: 2 to 4 short paragraphs. The first sentence says what the viewer gets and works on its own in search results. Only state what is in the transcript; never invent facts, names, numbers or promises. No hashtags and no links (the channel footer is added later).\n- tags: 8 to 15 search phrases a viewer would type, specific to this video, lower case, no hashtags, no duplicates of each other.\n- thumbnail_text: 2 to 5 words in the metadata language that make someone click, no punctuation except ? or !.\n- chapters: only for videos longer than 3 minutes: at least 3 entries, the first at 0:00, times as m:ss taken from the transcript, short titles. For shorter videos return an empty list.\n- Follow the channel style guide below where it is more specific than these rules.\n- If the request contains extra instructions from the uploader, follow them for the title, wording, focus and tone. They take priority over the channel style guide, but never over the rule against inventing facts.\n- The request lists the fields the uploader already wrote. Return those unchanged and write only the fields marked MISSING, so that they fit what the uploader wrote.\n- Answer with the JSON object only."
+            }
+          ]
+        }
+      },
+      "id": "82f304f1-c2bc-5395-9d1f-2c95f7c32610",
+      "name": "Write missing metadata (local LLM)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        3740,
+        520
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "model": "={{ $env.OLLAMA_MODEL || 'gemma4:latest' }}",
+        "options": {
+          "think": false,
+          "temperature": 0.4,
+          "numCtx": 8192,
+          "keepAlive": "10m",
+          "format": "json"
+        }
+      },
+      "id": "2f9fccde-7914-5975-859e-32e5778ed545",
+      "name": "Ollama (local)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        3700,
+        740
+      ],
+      "credentials": {
+        "ollamaApi": {
+          "id": "ytpOllamaCred001",
+          "name": "Ollama (local)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"title\": {\n      \"type\": \"string\",\n      \"description\": \"Video title, max 70 characters\"\n    },\n    \"description\": {\n      \"type\": \"string\",\n      \"description\": \"Video description without hashtags or links\"\n    },\n    \"tags\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      },\n      \"description\": \"8 to 15 search tags\"\n    },\n    \"thumbnail_text\": {\n      \"type\": \"string\",\n      \"description\": \"2 to 5 words for the thumbnail\"\n    },\n    \"chapters\": {\n      \"type\": \"array\",\n      \"description\": \"Chapters for videos over 3 minutes, else empty\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"time\": {\n            \"type\": \"string\"\n          },\n          \"title\": {\n            \"type\": \"string\"\n          }\n        },\n        \"required\": [\n          \"time\",\n          \"title\"\n        ]\n      }\n    }\n  },\n  \"required\": [\n    \"title\",\n    \"description\",\n    \"tags\",\n    \"thumbnail_text\",\n    \"chapters\"\n  ]\n}"
+      },
+      "id": "6bd18beb-52ac-51d4-aea1-7951093824ee",
+      "name": "Metadata schema",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [
+        3860,
+        740
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Fields from the text file win; the LLM only fills the gaps. YouTube's limits apply to both.\nconst it = $('Parse intake').first().json;\nconst ch = $('Parse channel config').first().json.data;\nconst ran = (name) => { try { return $(name).isExecuted; } catch (e) { return false; } };\nconst ai = ran('Write missing metadata (local LLM)')\n  ? ($('Write missing metadata (local LLM)').first().json.output || {})\n  : {};\n\nconst oneLine = (s) => String(s ?? '').replace(/[<>]/g, '').replace(/\\s+/g, ' ').trim();\nconst bytes = (s) => encodeURIComponent(s).replace(/%[0-9A-F]{2}/gi, 'x').length;\nconst fold = (s) => s.normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase(); // 'café' == 'cafe'\nconst source = {};\n\n// Title: max 100 characters, no angle brackets (YouTube rejects them)\nconst fs = it.field_source || {};  // 'app' = typed in the desktop app, 'file' = meta.txt\nlet title = oneLine(it.title);\nsource.title = fs.title === 'app' ? 'app' : 'file';\nif (!title) { title = oneLine(ai.title) || it.base_name; source.title = 'llm'; }\nif (title.length > 100) title = title.slice(0, 99).replace(/\\s+\\S*$/, '') + '…';\n\n// Description: the uploader's text as written; a generated one gets chapters, hashtags and the channel footer\nlet description;\nif (it.description) {\n  description = String(it.description).replace(/[<>]/g, '').trim();\n  source.description = fs.description === 'app' ? 'app' : 'file';\n} else {\n  const parts = [String(ai.description || '').replace(/[<>]/g, '').trim()];\n  const chapters = Array.isArray(ai.chapters) ? ai.chapters : [];\n  if (!it.is_short && chapters.length >= 3 && /^0?0:00$/.test(String(chapters[0].time).trim())) {\n    parts.push(chapters.map((c) => `${String(c.time).trim()} ${oneLine(c.title)}`).join('\\n'));\n  }\n  if (ch.hashtags?.length) parts.push(ch.hashtags.join(' '));\n  if (ch.description_footer) parts.push(ch.description_footer);\n  description = parts.filter(Boolean).join('\\n\\n');\n  source.description = 'llm';\n}\n// Linked video at the top of the description (Shorts: the latest long video by default)\nconst link = ran('Pick linked video') ? $('Pick linked video').first().json : null;\nif (link && link.ok && !description.includes(link.id)) {\n  const lang = String(ch.metadata_language || '').slice(0, 2);\n  const label = ch.related_label\n    || ({ es: '▶ Video completo', de: '▶ Ganzes Video', pt: '▶ Vídeo completo', fr: '▶ Vidéo complète' }[lang] || '▶ Full video');\n  const head = (oneLine(link.title) ? `${label}: ${oneLine(link.title)}` : `${label}:`) + `\\n${link.url}`;\n  description = [head, description].filter(Boolean).join('\\n\\n');\n}\nwhile (bytes(description) > 5000) description = description.slice(0, -50);  // cuts the end, the link stays\n\n// Tags: the uploader's list, or channel defaults + LLM tags; YouTube counts quotes around\n// tags with spaces and the commas between them, total max 500 characters\nconst fromFile = (it.tags || []).length > 0;\nsource.tags = fromFile ? (fs.tags === 'app' ? 'app' : 'file') : 'llm';\nconst tagList = [];\nlet budget = 0;\nfor (const raw of fromFile ? it.tags : [...(ch.default_tags || []), ...(ai.tags || [])]) {\n  const tag = oneLine(raw).replace(/[,#]/g, '').slice(0, 60);\n  if (!tag || tagList.some((x) => fold(x) === fold(tag))) continue;\n  const cost = tag.length + (tag.includes(' ') ? 2 : 0) + (tagList.length ? 1 : 0);\n  if (budget + cost > 480) break;\n  tagList.push(tag);\n  budget += cost;\n}\n\nconst thumbs = it.thumbnails || [];\nreturn [{\n  json: {\n    channel: it.channel,\n    channelName: ch.display_name || it.channel,\n    fileName: it.file_name,\n    videoPath: it.video_path,\n    isShort: it.is_short,\n    duration: it.duration_s,\n    title,\n    description,\n    tagList,\n    tags: tagList.join(','),\n    source,\n    model: $env.OLLAMA_MODEL || 'gemma4:latest',\n    metaFile: it.meta_file,\n    thumbA: thumbs[0] || null,\n    thumbB: thumbs[1] || null,\n    privacy: it.privacy || 'private',\n    privacySource: it.privacy_source || 'default',\n    related: link\n      ? { ok: Boolean(link.ok), id: link.id || null, title: link.title || '', url: link.url || null,\n          mode: link.mode, source: link.source, note: (link.ok ? link.warning : link.reason) || null }\n      : { ok: false, mode: (it.related || {}).mode || 'none', source: (it.related || {}).source || '' },\n    publishAt: it.publish_at || null,\n    publishAtLocal: it.publish_at_local || null,\n    categoryId: String(ch.category_id || '22'),\n    defaultLanguage: ch.metadata_language || 'en',\n    madeForKids: Boolean(ch.made_for_kids),\n  },\n}];\n"
+      },
+      "id": "0859874c-f986-5843-9e54-4616b0575345",
+      "name": "Final metadata",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $('Final metadata').first().json.videoPath }}",
+        "options": {}
+      },
+      "id": "5146e5a1-b5a1-543c-bbcc-d18b09f32243",
+      "name": "Read video file",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        4180,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "title": "={{ $('Final metadata').first().json.title }}",
+        "regionCode": "DE",
+        "categoryId": "={{ $('Final metadata').first().json.categoryId }}",
+        "binaryProperty": "data",
+        "options": {
+          "defaultLanguage": "={{ $('Final metadata').first().json.defaultLanguage }}",
+          "description": "={{ $('Final metadata').first().json.description }}",
+          "tags": "={{ $('Final metadata').first().json.tags }}",
+          "privacyStatus": "private",
+          "notifySubscribers": "={{ $('Final metadata').first().json.privacy === 'public' }}",
+          "selfDeclaredMadeForKids": "={{ $('Final metadata').first().json.madeForKids }}",
+          "embeddable": true
+        }
+      },
+      "id": "5a280f15-9b04-55f6-8a30-1b64a83fb3f5",
+      "name": "Upload to YouTube (private)",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [
+        4400,
+        300
+      ],
+      "credentials": {
+        "youTubeOAuth2Api": {
+          "id": "ytpYouTubeCred01",
+          "name": "YouTube"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "76f3fa42-55d5-5bfb-9170-9e7ef3591314",
+              "leftValue": "={{ Boolean($('Final metadata').first().json.thumbA) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "835636ac-8224-5714-94f9-357d1657cde1",
+      "name": "Thumbnail A?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4620,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $('Final metadata').first().json.thumbA.path }}",
+        "options": {}
+      },
+      "id": "c4e3ea66-b275-599e-93ac-3760b4a38e57",
+      "name": "Read thumbnail A",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        4840,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId={{ $('Upload to YouTube (private)').first().json.uploadId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "youTubeOAuth2Api",
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "id": "d915cd4a-87dd-5423-9bc7-64919abca069",
+      "name": "Set thumbnail A",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5060,
+        180
+      ],
+      "credentials": {
+        "youTubeOAuth2Api": {
+          "id": "ytpYouTubeCred01",
+          "name": "YouTube"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c9c82e71-7a5a-56d1-937d-2b990aad1fdc",
+              "leftValue": "={{ $('Final metadata').first().json.privacy !== 'private' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "91549f71-67e8-549b-a8e7-86e3b3ea377d",
+      "name": "Make it visible?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "https://www.googleapis.com/youtube/v3/videos?part=status",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "youTubeOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ id: $('Upload to YouTube (private)').first().json.uploadId, status: { privacyStatus: $('Final metadata').first().json.publishAt ? 'private' : $('Final metadata').first().json.privacy, publishAt: $('Final metadata').first().json.publishAt || undefined, embeddable: true, license: 'youtube', publicStatsViewable: true, selfDeclaredMadeForKids: $('Final metadata').first().json.madeForKids } }) }}",
+        "options": {}
+      },
+      "id": "03d69e77-c17c-5d72-9330-2f1a8dd2763a",
+      "name": "Set visibility",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5500,
+        180
+      ],
+      "credentials": {
+        "youTubeOAuth2Api": {
+          "id": "ytpYouTubeCred01",
+          "name": "YouTube"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst ran = (name) => { try { return $(name).isExecuted; } catch (e) { return false; } };\nconst m = $('Final metadata').first().json;\nconst videoId = $('Upload to YouTube (private)').first().json.uploadId;\nconst studio = `https://studio.youtube.com/video/${videoId}/edit`;\nconst watch = `https://youtu.be/${videoId}`;\nconst from = (key) => (m.source[key] === 'app' ? 'typed in the app'\n  : m.source[key] === 'file' ? `from ${esc(m.metaFile)}` : `written by ${esc(m.model)}`);\n\nlet thumbA = 'none in the folder, YouTube picks a frame';\nif (m.thumbA) {\n  const res = ran('Set thumbnail A') ? $('Set thumbnail A').first().json : {};\n  thumbA = res.error\n    ? `${esc(m.thumbA.name)} NOT set: ${esc(String(res.error.message || res.error).slice(0, 150))}`\n    : `${esc(m.thumbA.name)} set`;\n}\nlet thumbB = null;\nif (m.thumbB) {\n  thumbB = m.isShort\n    ? `${esc(m.thumbB.name)} not used, YouTube has no thumbnail A/B test for Shorts`\n    : `${esc(m.thumbB.name)}: the API sets one thumbnail only, so add A and B in YouTube Studio under A/B testing`;\n}\n// Visibility: uploaded private; \"Set visibility\" switched it if something else was wanted\nlet header = '🔒 <b>Uploaded as private</b>';\nlet outcome = 'uploaded_private';\nif (m.privacy !== 'private') {\n  const res = ran('Set visibility') ? $('Set visibility').first().json : {};\n  const now = res.status && res.status.privacyStatus;\n  const want = m.publishAt ? `schedule it for ${esc(m.publishAtLocal)}` : `make it ${esc(m.privacy)}`;\n  if (res.error || !now) {\n    header = `❌ <b>Uploaded as private, could not ${want}</b>\\n`\n      + esc(String((res.error && (res.error.message || res.error)) || 'no answer from YouTube').slice(0, 200));\n    outcome = m.publishAt ? 'schedule_failed' : 'visibility_failed';\n  } else if (m.publishAt) {\n    if (now === 'private' && res.status.publishAt) {\n      header = `🗓️ <b>Scheduled</b>: private until ${esc(m.publishAtLocal)}, then public`;\n      outcome = 'scheduled';\n    } else {\n      header = `⚠️ <b>YouTube did not keep the publish date</b> (status ${esc(now)}). Set it in Studio.`;\n      outcome = 'schedule_failed';\n    }\n  } else if (now === m.privacy) {\n    header = m.privacy === 'public' ? '🌍 <b>Published</b>' : '🔗 <b>Uploaded as unlisted</b> (only people with the link)';\n    outcome = m.privacy === 'public' ? 'published' : 'uploaded_unlisted';\n  } else {\n    header = `⚠️ <b>YouTube kept it ${esc(now)}</b> (wanted ${esc(m.privacy)}). Uploads from API projects `\n      + \"that have not passed YouTube's audit stay private; change it in Studio.\";\n    outcome = 'visibility_locked';\n  }\n}\nconst rv = m.related || {};\nconst desc = m.description.length > 700 ? m.description.slice(0, 699) + '…' : m.description;\nconst lines = [\n  header,\n  `<b>${esc(m.title)}</b>`,\n  `${esc(m.channelName)} · ${m.isShort ? 'Short' : 'Video'} · ${Math.round(m.duration)} s`,\n  '',\n  `<i>Title:</i> ${from('title')}`,\n  `<i>Description:</i> ${from('description')}`,\n  `<i>Tags:</i> ${from('tags')}: ${esc(m.tagList.slice(0, 12).join(', '))}`,\n  `<i>Thumbnail A:</i> ${thumbA}`,\n  ...(thumbB ? [`<i>Thumbnail B:</i> ${thumbB}`] : []),\n  ...(rv.ok\n    ? [`<i>Linked video:</i> <a href=\"${rv.url}\">${esc(rv.title || rv.id)}</a>, at the top of the description`\n       + (m.isShort ? `. Shorts \"Related video\" has no API: pick it in Studio (id <code>${esc(rv.id)}</code>).` : '')\n       + (rv.note ? ` ⚠️ ${esc(rv.note)}` : '')]\n    : rv.mode && rv.mode !== 'none' ? [`<i>Linked video:</i> ⚠️ none added: ${esc(rv.note || 'lookup skipped')}`] : []),\n  `<i>Visibility:</i> ${m.publishAt ? `public from ${esc(m.publishAtLocal)}` : esc(m.privacy)} (${esc(m.privacySource)})`,\n  '',\n  esc(desc),\n  '',\n  `<a href=\"${studio}\">Open in YouTube Studio</a> · <a href=\"${watch}\">Watch</a>`,\n];\nreturn [{ json: { text: lines.join('\\n'), videoId, outcome } }];\n"
+      },
+      "id": "47b19e32-8006-57d9-9fa5-9af60b4af65b",
+      "name": "Build reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5720,
+        300
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "572eb6fb-de31-5bdc-a8ec-4a1a31c4fbe0",
+      "name": "Result (shown in the app)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        5940,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// One CSV line per run: timestamp,channel,file,video_id,title,outcome,detail,execution_id\nconst m = $('Final metadata').first().json;\nconst videoId = $('Upload to YouTube (private)').first().json.uploadId;\nconst generated = ['title', 'description', 'tags'].filter((k) => m.source[k] === 'llm');\nconst outcome = $('Build reply').first().json.outcome;\nconst detail = 'desktop' + (generated.length ? ' generated ' + generated.join('+') : '') + ` wanted ${m.publishAt ? 'public at ' + m.publishAt : m.privacy}`\n  + (m.related && m.related.ok ? ` linked ${m.related.id}` : '');\nconst q = (v) => `\"${String(v ?? '').replace(/\"/g, '\"\"').replace(/\\r?\\n/g, ' ')}\"`;\nconst line = [new Date().toISOString(), m.channel, q(m.fileName), videoId, q(m.title), outcome, q(detail), $execution.id].join(',') + '\\n';\nreturn [{ json: { line } }];\n"
+      },
+      "id": "71bce522-8a88-5b6b-90a8-c309523b2c2b",
+      "name": "Build log line",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6160,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "line",
+        "options": {
+          "fileName": "runs.csv"
+        }
+      },
+      "id": "7992554c-8551-5b47-b628-52688e455bf4",
+      "name": "To CSV text",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        6380,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $('Read job').first().json.repo }}/logs/runs.csv",
+        "options": {
+          "append": true
+        }
+      },
+      "id": "f6c49a98-9569-5987-8237-7eafba522dd8",
+      "name": "Append to logs/runs.csv",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        6600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f1226b49-c16d-5e5f-866d-89407c409cdd",
+              "leftValue": "={{ ($('Parse intake').first().json.related || {}).mode === 'video' || ($('Parse intake').first().json.related || {}).mode === 'latest' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0e9859da-6086-5db7-85c2-4347c701af7f",
+      "name": "Link a video?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1980,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/youtube/v3/channels?part=contentDetails&mine=true",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "youTubeOAuth2Api",
+        "options": {}
+      },
+      "id": "27ea0fad-d5fc-5513-aa89-76737293c3c3",
+      "name": "Find uploads playlist",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        180
+      ],
+      "credentials": {
+        "youTubeOAuth2Api": {
+          "id": "ytpYouTubeCred01",
+          "name": "YouTube"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=50&playlistId={{ ((($json.items || [])[0] || {}).contentDetails || { relatedPlaylists: {} }).relatedPlaylists.uploads || 'none' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "youTubeOAuth2Api",
+        "options": {}
+      },
+      "id": "e4dd3051-43a0-5f64-a066-e4cf42fcb28c",
+      "name": "Latest uploads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        180
+      ],
+      "credentials": {
+        "youTubeOAuth2Api": {
+          "id": "ytpYouTubeCred01",
+          "name": "YouTube"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,status&id={{ $('Parse intake').first().json.related.mode === 'video' ? $('Parse intake').first().json.related.video_id : ($json.items || []).map((i) => i.contentDetails.videoId).join(',') || 'none' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "youTubeOAuth2Api",
+        "options": {}
+      },
+      "id": "c7308498-0f76-5fd5-aada-00c1562378d8",
+      "name": "Video details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        180
+      ],
+      "credentials": {
+        "youTubeOAuth2Api": {
+          "id": "ytpYouTubeCred01",
+          "name": "YouTube"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// A named video, or the newest public upload longer than 3 minutes (Shorts are 3 minutes at most)\nconst rel = $('Parse intake').first().json.related || {};\nconst errOf = (n) => { const j = $(n).first().json; return j.error ? (j.error.message || JSON.stringify(j.error)) : null; };\nconst err = ['Find uploads playlist', 'Latest uploads', 'Video details'].map(errOf).find(Boolean);\nconst items = $('Video details').first().json.items || [];\nconst secs = (iso) => {\n  const m = /^P(?:(\\d+)D)?T?(?:(\\d+)H)?(?:(\\d+)M)?(?:(\\d+)S)?$/.exec(String(iso || '')) || [];\n  return (+m[1] || 0) * 86400 + (+m[2] || 0) * 3600 + (+m[3] || 0) * 60 + (+m[4] || 0);\n};\nconst out = (pick, note) => [{ json: pick\n  ? { ok: true, id: pick.id, title: (pick.snippet || {}).title || '', url: `https://youtu.be/${pick.id}`,\n      mode: rel.mode, source: rel.source, warning: note || null }\n  : { ok: false, mode: rel.mode, source: rel.source, reason: note } }];\n\nif (rel.mode === 'video') {\n  const found = items.find((v) => v.id === rel.video_id);\n  if (found) {\n    const st = (found.status || {}).privacyStatus;\n    return out(found, st && st !== 'public' ? `the linked video is ${st}` : null);\n  }\n  // not visible to this channel's API (another channel, deleted): link it anyway, without a title\n  return out({ id: rel.video_id, snippet: {} }, err ? `could not check it: ${String(err).slice(0, 120)}` : 'could not check it');\n}\nconst long = items\n  .filter((v) => (v.status || {}).privacyStatus === 'public' && secs((v.contentDetails || {}).duration) > 180)\n  .sort((a, b) => String((b.snippet || {}).publishedAt).localeCompare(String((a.snippet || {}).publishedAt)));\nif (long.length) return out(long[0]);\nreturn out(null, err ? `YouTube lookup failed: ${String(err).slice(0, 150)}`\n  : 'no public video longer than 3 minutes among the last 50 uploads');\n"
+      },
+      "id": "2d15c217-017d-53c8-bd6c-5cfb3de37f5d",
+      "name": "Pick linked video",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        180
+      ]
+    }
+  ],
+  "connections": {
+    "Started by the desktop app": {
+      "main": [
+        [
+          {
+            "node": "Read job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read job": {
+      "main": [
+        [
+          {
+            "node": "Is it a path?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is it a path?": {
+      "main": [
+        [
+          {
+            "node": "Check folder (intake.py)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Not a path",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check folder (intake.py)": {
+      "main": [
+        [
+          {
+            "node": "Parse intake",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse intake": {
+      "main": [
+        [
+          {
+            "node": "Folder OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Folder OK?": {
+      "main": [
+        [
+          {
+            "node": "Status (shown in the app)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Problem (shown in the app)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Status (shown in the app)": {
+      "main": [
+        [
+          {
+            "node": "Load channel config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load channel config": {
+      "main": [
+        [
+          {
+            "node": "Parse channel config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse channel config": {
+      "main": [
+        [
+          {
+            "node": "Link a video?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything missing?": {
+      "main": [
+        [
+          {
+            "node": "Transcribe (faster-whisper)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Final metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribe (faster-whisper)": {
+      "main": [
+        [
+          {
+            "node": "Parse transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse transcript": {
+      "main": [
+        [
+          {
+            "node": "Write missing metadata (local LLM)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama (local)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Write missing metadata (local LLM)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Metadata schema": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Write missing metadata (local LLM)",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write missing metadata (local LLM)": {
+      "main": [
+        [
+          {
+            "node": "Final metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final metadata": {
+      "main": [
+        [
+          {
+            "node": "Read video file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read video file": {
+      "main": [
+        [
+          {
+            "node": "Upload to YouTube (private)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to YouTube (private)": {
+      "main": [
+        [
+          {
+            "node": "Thumbnail A?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Thumbnail A?": {
+      "main": [
+        [
+          {
+            "node": "Read thumbnail A",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Make it visible?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read thumbnail A": {
+      "main": [
+        [
+          {
+            "node": "Set thumbnail A",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set thumbnail A": {
+      "main": [
+        [
+          {
+            "node": "Make it visible?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Make it visible?": {
+      "main": [
+        [
+          {
+            "node": "Set visibility",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set visibility": {
+      "main": [
+        [
+          {
+            "node": "Build reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build reply": {
+      "main": [
+        [
+          {
+            "node": "Result (shown in the app)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Result (shown in the app)": {
+      "main": [
+        [
+          {
+            "node": "Build log line",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build log line": {
+      "main": [
+        [
+          {
+            "node": "To CSV text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "To CSV text": {
+      "main": [
+        [
+          {
+            "node": "Append to logs/runs.csv",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Link a video?": {
+      "main": [
+        [
+          {
+            "node": "Find uploads playlist",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Anything missing?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find uploads playlist": {
+      "main": [
+        [
+          {
+            "node": "Latest uploads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Latest uploads": {
+      "main": [
+        [
+          {
+            "node": "Video details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Video details": {
+      "main": [
+        [
+          {
+            "node": "Pick linked video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick linked video": {
+      "main": [
+        [
+          {
+            "node": "Anything missing?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "YtPublishError01",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "pinData": {},
+  "active": false,
+  "versionId": "9c35d5e7-76e6-5e9e-92ce-1927cc64b94d",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

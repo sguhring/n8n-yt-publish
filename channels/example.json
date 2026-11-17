@@ -1,0 +1,23 @@
+{
+  "id": "example",
+  "display_name": "Example Kitchen (demo)",
+  "metadata_language": "en",
+  "audio_language": "en",
+  "category_id": "26",
+  "made_for_kids": false,
+  "default_tags": [
+    "kitchen tips",
+    "quick recipes",
+    "home cooking",
+    "cooking basics"
+  ],
+  "hashtags": ["#kitchentips", "#cooking"],
+  "description_footer": "🍳 One short kitchen tip at a time.\n🔔 Subscribe so you don't miss the next one.",
+  "style": "Audience: home cooks who want quick, practical tips. Write in English. Name the dish or technique and the one step that matters most, with the numbers from the video (times, temperatures, amounts). Friendly, clear, no exaggeration.",
+  "thumbnail": {
+    "background": "#1B1B1F",
+    "accent": "#FF8A1F",
+    "text_color": "#FFFFFF",
+    "badge": "KITCHEN TIP"
+  }
+}

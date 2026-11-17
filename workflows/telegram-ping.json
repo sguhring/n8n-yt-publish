@@ -1,0 +1,42 @@
+{
+  "id": "YtTelegramPing01",
+  "name": "Setup check – Telegram ping",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "6f0c4a52-3d1e-4f0a-9b7e-1a2b3c4d5e01",
+      "name": "Run once",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "=✅ <b>n8n is connected.</b>\nPreviews and approval requests for new videos will arrive here.\nSent {{ $now.toFormat('dd.MM.yyyy HH:mm') }} from the YouTube publish workflow.",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "6f0c4a52-3d1e-4f0a-9b7e-1a2b3c4d5e02",
+      "name": "Send test message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [240, 0],
+      "credentials": {
+        "telegramApi": {
+          "id": "ytpTelegramCred1",
+          "name": "Telegram bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Run once": {
+      "main": [[{ "node": "Send test message", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}
