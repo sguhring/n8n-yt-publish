@@ -1,193 +1,194 @@
-# n8n YouTube publishing workflow
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/banner-dark.svg">
+    <img src="docs/banner-light.svg" width="100%" alt="n8n-yt-publish: folder or Telegram message, transcribe, write text, upload, publish">
+  </picture>
+</p>
 
-**Drop a video into a folder. The workflow transcribes it, writes the title, description and tags with an LLM, renders a thumbnail and uploads it privately. You approve it on Telegram before it goes public.**
+<p align="center">
+  <img alt="n8n 2.47" src="https://img.shields.io/badge/n8n-2.47-EA4B71?logo=n8n&logoColor=white">
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white">
+  <img alt="Local LLM with Ollama" src="https://img.shields.io/badge/LLM-Ollama%20(local)-1F2328?logo=ollama&logoColor=white">
+  <img alt="YouTube Data API v3" src="https://img.shields.io/badge/YouTube%20Data%20API-v3-FF0000?logo=youtube&logoColor=white">
+  <img alt="Telegram bot" src="https://img.shields.io/badge/Telegram-bot-26A5E4?logo=telegram&logoColor=white">
+  <img alt="Windows" src="https://img.shields.io/badge/platform-Windows-0078D4">
+</p>
 
-Built with [n8n](https://n8n.io) as the orchestrator. Python only does the two jobs n8n has no node for: local speech-to-text and image rendering.
+<p align="center">
+  <b>Send a folder path to a Telegram bot, and the video in it ends up on YouTube with a title, description, tags and thumbnail.</b><br>
+  n8n runs the workflow; transcription and the LLM run on your own machine, and n8n itself only runs while a job runs.
+</p>
 
-![Generated thumbnail for the made-up demo channel](docs/example-thumbnail.jpg)
+<p align="center">
+  <a href="#features">Features</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#usage">Usage</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="docs/how-it-works.md">Full documentation</a>
+</p>
 
-## What it does
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/desktop-app-dark.png">
+    <img src="docs/desktop-app-light.png" width="100%" alt="The desktop app after 'Write missing text with AI': folder check on the left, the AI draft in the text fields, the workflow steps with their timings on the right">
+  </picture>
+  <br>
+  <sub>The desktop app after <b>Write missing text with AI</b> on a 24-second Short of a made-up demo channel. The title came from the folder's <code>meta.txt</code>; the local LLM wrote the description and 12 tags from the transcript; <code>Related: none</code> turned the linked video off. 115 s, nothing uploaded.</sub>
+</p>
 
-1. **Intake**: a video lands in `inbox/<channel>/`, optionally with a thumbnail (`clip.jpg`) and an instruction file (`clip.txt` or `clip.md`) of the same name. A Local File Trigger waits until the copy is finished.
-2. **Transcribe**: [faster-whisper](https://github.com/SYSTRAN/faster-whisper) runs locally on the CPU (no audio leaves the machine). A 35-second Short takes about 40 seconds.
-3. **Enrich with a local LLM**: an n8n LLM chain with a local model on [Ollama](https://ollama.com) (default `gemma4`, 8B, on the laptop GPU) writes the title, description, tags, thumbnail text and chapters. Transcript and metadata never leave the machine.
-   - If an instruction file exists, its text goes into the prompt, e.g. `Start the title with "Kitchen tip:"`. It overrides the channel style guide but not the rule against invented facts.
-   - The output is checked against a JSON schema (Structured Output Parser), not parsed from free text.
-4. **Apply channel rules**: a Code node enforces what must never depend on the model:
-   - YouTube's limits: title 100 characters, description 5000 bytes, tags 500 characters.
-   - The channel's fixed tags, hashtags and footer.
-   - Accent-insensitive tag de-duplication.
-   - Chapters only for long videos.
-5. **Thumbnail**: uses the supplied image, or renders one from a representative frame with the channel's colours and badge.
-6. **Upload privately** with the YouTube node, then set the custom thumbnail through the API.
-7. **Human in the loop**: Telegram receives the thumbnail, title, description, tags and a YouTube Studio link. It then waits up to 48 hours for **Publish** or **Keep private**.
-8. **Release and log**: on Publish, the video is set public, and the workflow reports it if YouTube's audit lock kept it private. Every run appends one line to `logs/runs.csv`. Any failure triggers a separate error workflow, which sends a Telegram alert and logs the failure.
+## Features
+
+- **Three ways in**: send a folder path to a Telegram bot, use the desktop app, or drop a file into `inbox/<channel>/` and approve the result on Telegram.
+- **Your text first, AI for the gaps**: title, description and tags from a `meta.txt` in the folder are used as written. Only what is missing is written by a local LLM ([Ollama](https://ollama.com), `gemma4` by default), from a transcript by [faster-whisper](https://github.com/SYSTRAN/faster-whisper). The audio, the transcript and the prompts stay on your machine; only the finished video and its texts go to YouTube.
+- **Checked output**: the LLM answers in JSON against a schema; code then enforces YouTube's limits (title 100 characters, description 5000 bytes, tags 500 characters), the channel's footer, hashtags and fixed tags.
+- **Private first**: every video is uploaded private, gets its thumbnail, and only then turns public, unlisted or scheduled, so it never shows without its thumbnail.
+- **Scheduling in plain words**: `18.11. 18:00`, `morgen 18 Uhr`, `Freitag 9:30`, `mañana a las 18:00`.
+- **Shorts link back**: the channel's newest long video is linked at the top of every Short's description.
+- **Stop from your phone**: `/stop` ends a run and any n8n left running.
+- **No server left running**: n8n starts for the job and exits; no tunnel and nothing reachable from the internet for the Telegram and desktop routes.
+- **Audit trail**: one line per run in `logs/runs.csv`. Failures are reported in Telegram or in the app, never silently.
+
+## How it works
 
 ```mermaid
-flowchart LR
-  A[Video in inbox/channel] --> B[Transcribe<br/>faster-whisper, local]
-  B --> C[Local LLM via Ollama<br/>+ optional clip.txt<br/>schema-checked JSON]
-  C --> D[Channel rules<br/>limits, footer, tags]
-  D --> E{Thumbnail<br/>supplied?}
-  E -- no --> F[Render thumbnail<br/>Python + Pillow]
-  E -- yes --> G
-  F --> G[Upload to YouTube<br/>always private]
-  G --> H[Set thumbnail]
-  H --> I[Telegram preview<br/>Publish / Keep private]
-  I -- Publish --> J[Set public]
-  I -- Keep private or 48 h timeout --> K[Stays private]
-  J --> L[(logs/runs.csv)]
-  K --> L
-  X[Any failed step] -.-> Y[Error workflow<br/>Telegram alert + log]
+flowchart TD
+  A[Folder path sent<br/>to the Telegram bot] --> I
+  B[Desktop app] --> I
+  C[Video dropped into<br/>inbox/channel] --> T
+  I[Check the folder<br/>intake.py: video, meta.txt, thumbnails] --> Q{Title, description<br/>and tags all given?}
+  Q -- no --> T[Transcribe with faster-whisper<br/>local LLM writes what is missing]
+  Q -- yes --> R
+  T --> R[Channel rules<br/>limits, footer, tags, linked video]
+  R --> U[Upload to YouTube as private<br/>then set the thumbnail]
+  U --> V[Make it visible: as asked,<br/>at the scheduled time,<br/>or after approval on Telegram]
+  V --> G[(logs/runs.csv)]
 ```
 
-## Second entry point: send a folder path to Telegram
+n8n is the orchestrator: every step is a node you can open in the n8n editor. Python does only what n8n has no node for: reading the folder (`intake.py`), speech-to-text (`transcribe.py`) and rendering a thumbnail when none is supplied (`thumbnail.py`). Each script prints one JSON object back to n8n.
 
-`workflows/yt-publish-telegram.json` uploads from any folder on the PC, with your own texts and thumbnails:
+Every step, the design choices and the test log are in **[docs/how-it-works.md](docs/how-it-works.md)**.
 
-1. **Send the path, then double-click the shortcut**: in Explorer select the folder, press Ctrl+Shift+C (copy as path) and paste it into the chat with the bot. Then double-click **YouTube upload (Telegram)** on the desktop.
-   - `scripts/telegram_check.py` fetches the waiting paths from Telegram, which keeps them for 24 hours.
-   - It tells the bot it is starting, then runs the workflow once per path with `n8n execute`. n8n exits when the run is done.
-   - **Stop from the phone**: send `/stop` (or `stop`) to the bot. It ends the run in progress and any other n8n on the PC, including a server you started yourself, and drops the paths still waiting. The bot lists what it stopped. A path sent during a run is queued and runs next.
-   - If a run leaves n8n behind, the check ends it by itself. If n8n is still running after the last path for another reason (a server you started, a desktop-app run), the bot says so and keeps listening for `/stop` for 10 minutes (`STOP_LISTEN_MINUTES` in `.env`, `0` turns this off).
-   - No n8n server, no tunnel and nothing reachable from the internet in between.
-   - Only the chat in `TELEGRAM_CHAT_ID` is accepted. The path reaches the shell only hex-encoded, so a message cannot inject a command.
-2. **Check the folder** (`scripts/intake.py`):
-   - Finds the video, the optional text file and up to two thumbnails (A = first by file name, B = second).
-   - Hard-links them into `work/`, because n8n may only read files inside the repo.
-   - Re-saves a thumbnail over YouTube's 2 MB limit as JPEG.
-   - Replies with what it found and what is missing.
-3. **Linked video**: for a Short, three read-only YouTube API calls find the channel's newest public video longer than 3 minutes, and its link goes at the top of the description. A YouTube link after the path (or `Related:` in the text file) names another video; `no link` skips it. YouTube has no API for the Shorts "Related video" field, so the reply names the video to pick there in Studio.
-4. **Fill the gaps**: title, description and tags from the text file are used as written. Only if one of them is missing does the workflow transcribe the video and let the local LLM write the missing fields, using the same preset prompt and channel style guide as the main workflow.
-5. **Upload as private**, set thumbnail A, then switch to the wanted visibility or set the publish date, reply with the result and Studio link, log to `logs/runs.csv` (outcome `uploaded_private`, `uploaded_unlisted`, `published`, `scheduled`, `visibility_locked`, `visibility_failed` or `schedule_failed`). The video is always uploaded private first, so it never shows without its thumbnail. The YouTube API accepts one thumbnail per video, so thumbnail B is for A/B testing in YouTube Studio, which YouTube offers for long videos only, not for Shorts.
+## Quick start
 
-Text file (`meta.txt`, or the only `.txt`/`.md` in the folder; every part optional, German and Spanish keys work too):
+You need Windows 10 or 11 for the shortcuts and the desktop app (the workflows themselves run wherever n8n runs), plus:
 
+| Tool | For | Install |
+|---|---|---|
+| Node.js 24+ and n8n 2.47 | the workflows | `npm install -g n8n` |
+| Python 3.10+ | folder check, transcription, thumbnails | `pip install faster-whisper pillow` |
+| ffmpeg | video frames and duration | `winget install Gyan.FFmpeg` |
+| Ollama and a chat model | title, description, tags | `ollama pull gemma4` |
+| Google Cloud project | upload through the YouTube Data API v3 | OAuth client, see [setup](docs/setup.md#youtube-upload-thumbnail-publish) |
+| Telegram bot | the message route, alerts, approval | @BotFather, see [setup](docs/setup.md#telegram-preview-approval-alerts) |
+
+```powershell
+git clone https://github.com/sguhring/n8n-yt-publish.git
+cd n8n-yt-publish
+copy .env.example .env          # then fill in TELEGRAM_CHAT_ID, TELEGRAM_BOT_TOKEN, DEFAULT_CHANNEL
+n8n import:credentials --input=setup/credential-stubs.json
+n8n import:workflow --separate --input=workflows
+.\setup\create-shortcut.ps1     # puts "YouTube upload (Telegram)" and "YouTube upload (Desktop)" on the desktop
 ```
+
+Then open n8n once (`.\start-n8n.ps1`, <http://localhost:5678>) and fill in the Telegram and YouTube credentials. [docs/setup.md](docs/setup.md) walks through each one, including what Google enforces on new API projects.
+
+## Usage
+
+### From Telegram
+
+1. In Explorer, select the folder, press **Ctrl+Shift+C** and paste the path into the chat with your bot. Words after the path change one upload:
+
+   ```text
+   "C:\Videos\short 12"                     private, the default
+   "C:\Videos\short 12" public              or unlisted
+   "C:\Videos\short 12" morgen 18 Uhr       private until then, then public
+   "C:\Videos\short 12" no link             no linked video at the top
+   ```
+
+2. Double-click **YouTube upload (Telegram)**. For each path the bot says what it found, then sends the result with a YouTube Studio link. Paths wait in Telegram for 24 hours, so you can send them from your phone and run the shortcut later.
+3. Send `/stop` to end a run, any n8n still running on the PC, and the paths still waiting. This works while the shortcut's window is open.
+
+### From the desktop app
+
+Double-click **YouTube upload (Desktop)**. Choose the folder and press **Check**, then either type the texts yourself or press **Write missing text with AI** (a draft, nothing is uploaded). **Upload** runs the whole workflow, and the steps light up with their timings as n8n runs them.
+
+### The folder
+
+```text
+short 12/
+├── video.mp4      the one video in the folder
+├── meta.txt       optional, see below
+├── thumb_a.jpg    optional: thumbnail A, set through the API
+└── thumb_b.jpg    optional: thumbnail B, for A/B tests in YouTube Studio (long videos)
+```
+
+```text
 Title: Soft-boiled eggs in 6½ minutes
 Tags: eggs, breakfast, kitchen tips
-Channel: example
 Privacy: public
 Publish: 18.11.2026 18:00
 Related: https://youtu.be/VIDEO_ID
+Prompt: Title as a question, mention the cooking time
 Description:
 Everything from here on is the description,
 over as many lines as you like.
 ```
 
-A file without any key is read as the description. The channel comes from `Channel:`, else from a folder named like a channel, else from `DEFAULT_CHANNEL` in `.env`. Sending anything that is not a path returns these instructions.
+Every line is optional, and German and Spanish keys work too (`Titel`, `Beschreibung`, `Título`, `Descripción`, …). A file without keys is read as the description.
 
-Visibility is `private` unless you ask for more. Put a word after the path in the message (`"C:\Videos\short 12" public`, also `unlisted`, `öffentlich`, `nicht gelistet`, `público`), or on the next line. Without a word, `Privacy:` in the text file decides, then `DEFAULT_PRIVACY` in `.env`. The message wins over the file. Subscribers are notified only for public videos.
+### Folder drop with approval
 
-To schedule, write a date and time instead: `"C:\Videos\short 12" 18.11. 18:00`, also `morgen 18 Uhr`, `Freitag 9:30`, `mañana a las 18:00` or `2026-11-18 18:00`, or a `Publish:` line in the text file. The video is uploaded private and YouTube makes it public at that time (`publishAt`). The time is the PC's clock and must be at least 15 minutes ahead; a date without a time, or one in the past, keeps the video private and says why.
+Start n8n with `.\start-n8n.ps1 -Tunnel`, activate the workflow "YouTube publish (approve before release)", and drop `clip.mp4` into `inbox/<channel>/`, optionally with `clip.jpg` and `clip.txt`. The workflow transcribes it, writes all the texts, uploads it privately and asks on Telegram: **Publish** or **Keep private**. This route keeps an n8n server and a tunnel running while you use it. See [how it works](docs/how-it-works.md#folder-drop-with-approval-workflowsyt-publishjson).
 
-```mermaid
-flowchart LR
-  S[Folder path<br/>sent to the bot] --> T[Desktop shortcut<br/>telegram_check.py<br/>n8n execute, once per path]
-  T --> B[intake.py<br/>video, meta.txt, thumbnails]
-  B --> L{Short?}
-  L -- yes --> LV[Find latest long video<br/>link on top of description]
-  L -- no --> C
-  LV --> C{Title, description<br/>and tags all given?}
-  C -- no --> D[Transcribe + local LLM<br/>writes only the gaps]
-  C -- yes --> E
-  D --> E[Upload to YouTube<br/>private]
-  E --> F[Set thumbnail A]
-  F --> V{Private wanted?}
-  V -- no --> W[Set visibility<br/>public, unlisted or publishAt]
-  V -- yes --> G
-  W --> G[Telegram reply<br/>+ logs/runs.csv<br/>n8n exits]
-```
+## Configuration
 
-## Third entry point: the desktop app
-
-`app/server.py` (desktop shortcut **YouTube upload (Desktop)**) opens a small window with the same workflow and no Telegram:
-
-- **Folder**: choose it or paste the path. **Check** runs `intake.py` at once and shows the video, text file, thumbnails, linked video and visibility.
-- **Text with YouTube's limits**: title (100 characters, no `<` `>`), description (5000 bytes), tags (500 characters as YouTube counts them) and a prompt for the LLM (2000 characters). Fields show where their text comes from (text file, AI draft, typed). Empty fields come from the text file or the LLM.
-- **Publishing**: channel, linked video (empty means the latest long video), private / unlisted / public, or a publish date.
-- **Write missing text with AI** runs the workflow up to the final metadata without uploading (`workflows/yt-publish-desktop-preview.json`) and fills the form with the draft, so you edit it before the upload.
-- **Upload** runs `workflows/yt-publish-desktop.json`. The right side shows the workflow's ten steps live, read from n8n's debug log, with seconds per step, then the result with Watch and Studio links.
-
-The server listens on 127.0.0.1 only, accepts API calls only with a token embedded in its own page, and exits when the window closes. n8n runs only while a job runs.
-
-## Design choices
-
-| Choice | Why |
+| You want… | Do this |
 |---|---|
-| Nothing irreversible before a human approves | The upload is always private. Only the approval click makes a video public, and a timeout means "keep private". The Telegram entry point makes a video public or unlisted only when the message or the text file asks for it, and only after the thumbnail is set. |
-| Local model, optional per-video instructions | No API key, no per-call cost, and transcripts stay on the machine. A plain-text file next to the video steers one video without touching the workflow or the channel config. Ollama runs in JSON mode with thinking off, and the chain retries once on a malformed answer. |
-| LLM output is schema-validated, rules are code | The model writes; deterministic code enforces limits, mandatory footer and tags. A bad generation cannot break the upload. |
-| Channel settings are data, not workflow logic | Adding a channel means adding `channels/<id>.json` (language, tags, footer, style guide, thumbnail colours) and a folder. No workflow edit. |
-| Failures are visible | Error workflow plus Telegram alert. The thumbnail step and the publish step fail softly and say why (unverified channel, API audit lock). |
-| Audit trail | One CSV line per run: channel, file, video id, title, outcome (`published`, `publish_locked`, `declined`, `no_answer`, `publish_failed`, `error`; from Telegram or the app also `scheduled`, `uploaded_unlisted`, `uploaded_private`). |
-| Least privilege on the host | File nodes are restricted to this folder (`N8N_RESTRICT_FILE_ACCESS_TO`). Secrets live only in n8n's encrypted credential store or `.env`. The approval links are HMAC-signed by n8n. |
-| Heavy lifting outside n8n | Transcription and image rendering are small Python scripts that print one JSON object, so n8n stays the single place where the flow is visible. |
+| the video public or unlisted at once | `public` or `unlisted` after the path, `Privacy:` in `meta.txt`, or the switch in the app |
+| it to go public later | a date and time after the path, `Publish:` in `meta.txt`, or **publish at** in the app (at least 15 minutes ahead, PC clock) |
+| another linked video, or none | a YouTube link after the path or in `Related:`; `no link` for none |
+| to steer the AI for one video | `Prompt:` in `meta.txt`, the app's **Prompt for the LLM** field, or `clip.txt` next to the video in `inbox/` |
+| another default visibility | `DEFAULT_PRIVACY=private`, `unlisted` or `public` in `.env` |
+| no linked video by default | `DEFAULT_RELATED=none` |
+| another LLM | `OLLAMA_MODEL=` any model from `ollama list` (restart n8n if a server is running) |
+| a faster or more exact transcript | `WHISPER_MODEL=tiny`, `base`, `small` (default) or `medium` |
+| a second channel | copy `channels/example.json` to `channels/<id>.json` and edit language, tags, footer and style |
+| only folders below one path accepted | `INTAKE_ROOT=C:/Users/you/Videos` |
+| no 10-minute `/stop` window after a run | `STOP_LISTEN_MINUTES=0` |
 
-The same pattern (intake → AI enrichment → act → human approval → release → log) maps one-to-one onto Microsoft Power Automate; see [docs/power-automate-mapping.md](docs/power-automate-mapping.md).
+All settings with comments: [.env.example](.env.example).
 
-## What has been tested
+## Project structure
 
-On a 35-second dialogue Short with its metadata in another language than the speech, with n8n 2.47.7 on Windows 11, Node 24, Python 3.12:
-
-- **Run from the n8n CLI, ending in the binary ready for upload:** file filter, transcription (language detected, probability 0.999), LLM metadata, channel rules, thumbnail rendering, reading the video.
-- **Local model (16 Nov 2026):** gemma4 8B (Q4) on an RTX 5050 laptop GPU wrote the metadata in 25 s. With an instruction file asking for a fixed title prefix and the informal form of address, the title started with that prefix and the description used the informal form. Whole run from file to finished thumbnail: 89 s.
-- **Run in Node with mock data:** the preview, approval, log and error-alert code, covering every outcome, Telegram's caption limit and HTML/Markdown escaping.
-- **Example output** (the made-up demo channel `example`, a synthetic 24-second Short, desktop app draft):
-  - Title: *Soft-boiled eggs: the 6½-minute rule*, from `meta.txt`.
-  - Description: the steps with their times from the transcript (rolling boil, six and a half minutes, two minutes in ice water), then the channel's hashtags and footer.
-  - 12 tags: the channel's four fixed ones and eight from the LLM. One of them, *egg poaching*, is not in the video, which is why the draft is shown before anything is uploaded.
-  - The thumbnail above.
-
-- **Telegram path intake (16 Nov 2026):** tested from the n8n CLI with a fake Telegram message, up to the finished metadata:
-  - Folder with title and description but no tags: gemma4 wrote 14 tags in the channel's language, title and description stayed as written. 50 s.
-  - Folder with everything (path with spaces, in quotes as Explorer copies it): no transcription, no LLM. 35 s with n8n start-up.
-  - Wrong path with `& echo HACKED` appended: error reply, nothing executed.
-  - A plain chat message: usage reply.
-  - The shortcut path end to end against a fake Telegram API: a leftover webhook was removed, a message from another chat was ignored, the bot got "Starting n8n", n8n ran the workflow once and exited (134 s with cold start, transcription and gemma4). A second check with nothing waiting took 0.8 s.
-  - `intake.py` on its own also covers: a free-text file, a Markdown file, no text file, two videos, an unknown channel, four images and a 9 MB PNG thumbnail.
-
-- **Visibility, publish date, linked video (16 Nov 2026):**
-  - 52 parser checks on `intake.py`: German, English and Spanish date words, a time alone (today or tomorrow), year rollover, past or too-close dates kept private, links and `no link`, and which source wins.
-  - Mock runs of every reply outcome.
-  - Real run through n8n with a fake Telegram message `"…\markdown" morgen 18 Uhr`: the three YouTube lookups found the channel's newest long video, its link went on top of the description, and `publishAt` was set to 18:00 on the PC clock. No upload in this test.
-- **Desktop app (16 Nov 2026):** "Write missing text with AI" on a folder with title and description but no tags, through the real server and n8n: the steps lit up live (check 3.3 s, linked video 1.4 s, transcription 19.5 s, gemma4 11.4 s; 70 s with n8n start-up). The draft filled 13 tags and the description with the linked video on top, and kept the file's title. The counters block an upload over YouTube's limits (tags 949/500, description 5200/5000 bytes with multi-byte characters, `<` in the title). The **Upload** button itself has not been pressed in a test.
-- **/stop (17 Nov 2026):** 39 checks against a fake Telegram API and a fake n8n:
-  - `/stop` during a run: the run and its task runner end, and a path sent during the run is queued, then dropped and listed.
-  - A task runner left behind after a run is ended.
-  - `/stop` between waiting paths drops the earlier ones.
-  - A server still running after the upload gets one notice, a path sent while listening runs, and `stop` ends the server.
-  - Listening ends when its window runs out; `STOP_LISTEN_MINUTES=0` turns it off.
-  - A real `n8n execute` run through the fake API was noticed on exit. The n8n server already running on the PC was named in the notice and left alone.
-  - Not yet tried with the real bot.
-
-The YouTube and Telegram steps need your own Google OAuth client and Telegram bot (see setup).
-
-## Repository layout
-
-```
-channels/        one JSON per YouTube channel; example.json is a made-up demo, your own stay local
-scripts/         transcribe.py (faster-whisper), thumbnail.py (Pillow + ffmpeg), intake.py (folder check,
-                 visibility, publish date, linked video), telegram_check.py (fetches paths from the bot,
-                 runs n8n once per path)
-app/             server.py + index.html: the desktop app (live workflow steps, text fields with limits)
-workflows/       yt-publish.json (folder drop + approval), yt-publish-telegram.json (folder path via Telegram),
-                 yt-publish-desktop.json + yt-publish-desktop-preview.json (desktop app),
-                 yt-publish-error.json (error handler), telegram-ping.json (setup check)
-setup/           credential-stubs.json (names and ids only, no secrets), create-shortcut.ps1
-upload-from-telegram.cmd   what the desktop shortcut runs
-docs/            setup.md, power-automate-mapping.md
-start-n8n.ps1    starts n8n with the right settings (optional -Tunnel for phone approval)
-inbox/<channel>/ drop videos here (+ optional clip.jpg, clip.txt)          logs/runs.csv   run log
+```text
+app/              desktop app: server.py (local only, token-protected) + index.html
+channels/         one JSON per YouTube channel; example.json is a made-up demo, your own stay local
+docs/             setup.md, how-it-works.md, power-automate-mapping.md, images
+scripts/          intake.py (folder check, visibility, dates, linked video), transcribe.py,
+                  thumbnail.py, telegram_check.py (reads the bot, runs n8n once per path, /stop)
+setup/            credential-stubs.json (names and ids only, no secrets), shortcut and task scripts
+workflows/        the six n8n workflows: Telegram, desktop upload and draft, folder drop, error handler, ping
+start-n8n.ps1     starts n8n with the right settings (-Tunnel for the approval buttons)
+upload-from-telegram.cmd   what the Telegram shortcut runs
 ```
 
-## Setup
+`.env`, `credentials/`, your channel files, `inbox/` media, `work/` and `logs/` stay on your machine; `.gitignore` keeps them out of the repo.
 
-See [docs/setup.md](docs/setup.md): install, import, credentials (Ollama, Telegram, YouTube; Gemini as optional cloud alternative), and the limits Google enforces on new API projects.
+## Known limits
 
-## Known limits (set by YouTube, not by the workflow)
+- **Private until audited**: YouTube locks uploads from API projects that have not passed its API compliance audit to private. The workflow says so and links to Studio, where you publish by hand.
+- **Thumbnails** need a verified channel.
+- **Shorts "Related video"** has no API: the link goes into the description, and the reply names the video to pick in Studio.
+- **Quota**: the default YouTube API quota allows only a handful of uploads per day.
+- **`/stop` needs the shortcut's window**: nothing listens to the bot while it is closed. A `/stop` sent then acts on the next double-click.
 
-- Videos uploaded through an API project that has not passed YouTube's API compliance audit are locked to private. The workflow detects this and links to Studio, where you publish by hand.
-- Custom thumbnails need a verified channel.
-- The Shorts "Related video" field cannot be set through the API; the workflow puts the link in the description and names the video to pick in Studio.
-- The default API quota allows only a handful of uploads per day.
+## Built with
+
+[n8n](https://n8n.io) · [faster-whisper](https://github.com/SYSTRAN/faster-whisper) · [Ollama](https://ollama.com) with Gemma · [Pillow](https://python-pillow.org) · [FFmpeg](https://ffmpeg.org) · [YouTube Data API v3](https://developers.google.com/youtube/v3) · [Telegram Bot API](https://core.telegram.org/bots/api)
+
+The same intake → AI → act → approve → log pattern maps onto Microsoft Power Automate: [docs/power-automate-mapping.md](docs/power-automate-mapping.md).
+
+## License
+
+No license chosen yet, so all rights are reserved. Please ask before reusing the code.
